@@ -1,0 +1,62 @@
+---
+title: "Untitled"
+author: "Jonas Schuck"
+date: "2026-04-10"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure S2
+#
+########################################
+
+```{r}
+library(ggplot2)
+library(patchwork)
+```
+
+
+#read in intermediates
+```{r}
+s2_a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp2/intermediates/s2_a.rds")
+s2_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp2/intermediates/s2_b.rds")
+```
+
+```{r, fig.width=3}
+s2_a_empty <- plot_grid(s2_a, NA, labels = c("a", ""), label_size = 7, nrow = 2, hjust = -0.8, vjust = 1.0, rel_heights = c(1,0.3))
+s2_a_empty
+```
+
+```{r, fig.width=8, fig.height=4}
+s2_complete <- plot_grid(s2_a_empty, s2_b, labels = c("", "b"), label_size = 7, ncol = 2, hjust = -0.8, vjust = 1.0, rel_widths = c(0.65,1))
+s2_complete
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s2.pdf", plot=s2_complete,width = 8, height = 4)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s2.png", plot=s2_complete,width = 8, height = 4)
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

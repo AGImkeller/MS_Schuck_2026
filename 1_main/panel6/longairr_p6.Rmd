@@ -1,0 +1,119 @@
+---
+title: "longairr_p6"
+author: "Jonas Schuck"
+date: "2026-10-13"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure 6
+#
+########################################
+
+```{r}
+library(png)
+library(cowplot)
+library(patchwork)
+library(ggplot2)
+```
+
+#read in intermediates
+```{r}
+#richness + ucell
+p6_a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_a.rds")
+p6_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_b.rds")
+
+#clone + lineage
+p6_c <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_c.rds")
+p6_d <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_d_full.rds")
+
+#zoom-in + ucell
+p6_e <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_e.rds")
+p6_f <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/p6_f.rds")
+```
+
+#set up figure size
+```{r}
+FINAL_WIDTH <- 7.5
+FINAL_HEIGHT <- 8
+FIG_MARGIN <- 2
+
+canvas_width <- FINAL_WIDTH - 2 * FIG_MARGIN / 72.27
+canvas_height <- FINAL_HEIGHT - 2 * FIG_MARGIN / 72.27
+panel_margin <- theme(plot.margin = margin(0, 0, 0, 0))
+```
+
+```{r, fig.width=7.5, fig.height=8}
+# Extract tissue panels and legends.
+richness_panel <- cowplot::get_panel(p6_a + theme(legend.position = "none"))
+spatial_panel <- cowplot::get_panel(p6_c + theme(legend.position = "none"))
+zoom_panel <- cowplot::get_panel(p6_e + theme(legend.position = "none"))
+
+richness_legend <- cowplot::get_legend(p6_a)
+spatial_legend <- cowplot::get_legend(p6_c)
+selected_spot_legend <- cowplot::get_legend(p6_e)
+
+#same scaling for tissue figures in the left panel column
+tissue_left <- 0.005
+tissue_width <- 0.405
+tissue_height <- tissue_width * abs(diff(tissue_y_limits) / diff(tissue_x_limits)) *
+  canvas_width / canvas_height
+
+richness_top <- 0.98
+richness_bottom <- richness_top - tissue_height
+richness_legend_y <- richness_bottom - 0.05
+
+spatial_top <- richness_legend_y - 0.018
+spatial_bottom <- spatial_top - tissue_height
+spatial_legend_y <- spatial_bottom - 0.03
+
+zoom_top <- spatial_legend_y - 0.028
+zoom_aspect <- abs(diff(zoom_y_limits) / diff(zoom_x_limits)) * canvas_width / canvas_height
+zoom_width <- min(tissue_width, (zoom_top - 0.005) / zoom_aspect)
+zoom_height <- zoom_width * zoom_aspect
+zoom_left <- tissue_left + (tissue_width - zoom_width) / 2
+zoom_bottom <- zoom_top - zoom_height
+
+# lineage gets more space in right column
+right_left <- 0.48
+right_width <- 0.515
+#right_width <- 0.58
+region_bottom <- 0.72
+lineage_top <- 0.69
+lineage_bottom <- 0.285
+expression_top <- 0.255
+
+```
+
+```{r, fig.width=7.5, fig.height=8}
+p6_final <- cowplot::ggdraw() +
+  cowplot::draw_grob(richness_panel, x = tissue_left, y = richness_bottom, width = tissue_width, height = tissue_height, clip = "on") +
+  cowplot::draw_grob(richness_legend, x = tissue_left, y = richness_legend_y, width = tissue_width, height = 0.05) +
+  cowplot::draw_plot(p6_b + panel_margin, x = right_left, y = region_bottom, width = right_width, height = richness_top - region_bottom) +
+  cowplot::draw_grob(spatial_panel, x = tissue_left, y = spatial_bottom, width = tissue_width, height = tissue_height, clip = "on") +
+  cowplot::draw_grob(spatial_legend, x = tissue_left, y = spatial_legend_y, width = 0.465, height = 0.03) +
+  cowplot::draw_plot(p6_d + panel_margin, x = right_left, y = lineage_bottom, width = 0.58, height = lineage_top - lineage_bottom) +
+  cowplot::draw_grob(zoom_panel, x = zoom_left, y = zoom_bottom, width = zoom_width, height = zoom_height, clip = "on") +
+  cowplot::draw_plot(p6_f + panel_margin + theme(legend.position = "none"), x = right_left, y = 0.055, width = right_width, height = expression_top - 0.055) +
+  cowplot::draw_grob(selected_spot_legend, x = right_left, y = 0.005, width = right_width, height = 0.04) +
+  cowplot::draw_plot_label(c("a", "b", "c", "d", "e", "f"), 
+                           x = c(tissue_left, right_left, tissue_left, right_left, tissue_left, right_left),
+                           y = c(0.998, 0.998, spatial_top + 0.016, lineage_top + 0.018,
+                           zoom_top + 0.025, expression_top + 0.018), size = 7, hjust = 0, vjust = 1) +
+  theme(plot.margin = margin(FIG_MARGIN, FIG_MARGIN, FIG_MARGIN, FIG_MARGIN))
+
+
+p6_final
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p6_full.pdf", plot=p6_final, width = 7.5, height = 8)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p6_full.png", plot=p6_final, width = 7.5, height = 8)
+```
+
+```{r}
+sessionInfo()
+```
+
+

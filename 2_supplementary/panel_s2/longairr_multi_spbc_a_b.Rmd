@@ -1,0 +1,201 @@
+---
+title: "UMI group size"
+author: "Katharina Imkeller"
+date: "2026-01-09"
+output: html_document
+---
+
+########################################
+#
+# Script contains analyses regarding UMI groups with multi-SPBC annotation comparing
+# datasets across seq tech (S1_ONT_Q17, S1_PB_Q17) and additional datasets as a commparison 
+# from Visium V1 (S3_ONT_Q17) and Visium HD 3' (S4_ONT_Q17_HD)
+#
+# Results are shown in LongAIRR Fig. S2, S2
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(cowplot)
+```
+
+```{r}
+nano_17_sd_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+nano_17_sd_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+nano_2nd_sd_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+nano_2nd_sd_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+pb_17_sd_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+pb_17_sd_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+nano_HD_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_hd/sp21_hd_sd17_af5/post_whitelist_run/airr/tmp/ig/ig_db-pass.tsv", sep = "\t") 
+nano_HD_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_hd/sp21_hd_sd17_af5/post_whitelist_run/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+
+#nano_HD_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/sp21_sd17_af5_005_hd/airr_split/Ig/airr/tmp/ig_db-pass.tsv", sep = "\t") 
+#nano_HD_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/sp21_sd17_af5_005_hd/airr_split/TCR/airr/tmp/tr_db-pass.tsv", sep = "\t")
+
+```
+
+--------------------S2_a--------------
+--------------multi-SPBC UMI groups per chain
+-------------------------------------
+
+```{r}
+chain_cols <- c("IGH" = "#2f5e8fff", "IGK" = "#1b9e77ff", "IGL" = "#d95f02ff", "TRA" = "#bf8630ff", "TRB" = "#000000ff")
+```
+
+```{r}
+comcol <- intersect(colnames(nano_17_sd_bcr), colnames(nano_HD_bcr))
+```
+
+```{r}
+umi_conf_df <- rbind(
+    rbind(nano_17_sd_bcr, nano_17_sd_tcr) %>%
+      select(comcol) %>%
+      mutate(method = "S1_ONT_Q17"),
+
+    rbind(nano_2nd_sd_bcr, nano_2nd_sd_tcr) %>%
+      select(comcol) %>%
+      mutate(method = "S3_ONT_Q17"),
+
+    rbind(pb_17_sd_bcr, pb_17_sd_tcr) %>%
+      select(comcol) %>%
+      mutate(method = "S1_PB_Q17"),
+
+    rbind(nano_HD_bcr, nano_HD_tcr) %>%
+      select(-any_of(c("spbc"))) %>%
+      mutate(spbc=spbcid) %>%
+      #mutate(umi = stringr::str_sub(umi, 1, 9)) %>%
+      select(comcol) %>%
+      mutate(method = "S4_ONT_Q17_HD")) %>%
+  filter(!locus %in% c("TRD", "TRG")) %>%
+  group_by(locus, method) %>%
+  select(locus, umi, spbc, method) %>%
+  mutate(total = n()) %>%
+  group_by(locus, umi, method, total) %>%
+  mutate(count_spbc = n_distinct(spbc)) %>%
+  mutate(spbc_confu = count_spbc > 1) %>%
+  group_by(locus, method) %>%
+  summarise(perc = sum(spbc_confu) / first(total) * 100, .groups = "drop") %>%
+  mutate(method = factor(method,levels = c("S1_PB_Q17", "S1_ONT_Q17", "S3_ONT_Q17", "S4_ONT_Q17_HD")))
+```
+
+
+method comparison figure
+```{r}
+umi_conf_dot <- umi_conf_df %>%
+  ggplot(aes(x = method, y = perc, color = locus, group = locus)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 1.6) +
+  labs(x = NULL, y = "Cross-SPBC UMI groups (%)", color = NULL) +
+  theme_bw(base_size = 7) +
+  scale_color_manual(values = chain_cols) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(t = -4),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom") +
+  guides(color=guide_legend(title = ""))
+```
+
+```{r, fig.width=3.2, fig.height=3}
+s2_a <- umi_conf_dot + plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+s2_a
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp2/intermediates/")
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+saveRDS(s2_a, file=file.path(save_dir, "s2_a.rds"))
+```
+
+--------------------S2_b--------------
+--------------SPBCs per UMI across datasets + top10 multi-SPBC UMI groups
+-------------------------------------
+
+function set up
+```{r}
+prep_umi_rank <- function(df, method_label) {
+  df %>%
+    filter(locus %in% c("IGH", "IGK", "IGL", "TRA", "TRB")) %>%
+    group_by(locus, umi) %>%
+    summarise(count_spbc = n_distinct(spbc), .groups = "drop") %>%
+    group_by(locus) %>%
+    arrange(desc(count_spbc), .by_group = TRUE) %>%
+    mutate(rank = row_number()) %>%
+    filter(rank <= 10) %>%
+    ungroup() %>%
+    mutate(method = method_label)
+}
+```
+
+top10 umis with most multi-spbc annotation
+```{r}
+# top10 umis with most multi-spbc annotation
+df_all_umis <- bind_rows(
+  prep_umi_rank(rbind(pb_17_sd_bcr, pb_17_sd_tcr), "S1_PB_Q17\n(Visium V1)"),
+  prep_umi_rank(rbind(nano_17_sd_bcr, nano_17_sd_tcr),"S1_ONT_Q17\n(Visium V1)"),
+  prep_umi_rank(rbind(nano_HD_bcr, nano_HD_tcr), "S4_ONT_Q17_HD\n(Visium HD 3')")) %>%
+  mutate(method = factor(method, levels = c("S1_PB_Q17\n(Visium V1)", "S1_ONT_Q17\n(Visium V1)", "S4_ONT_Q17_HD\n(Visium HD 3')")),
+    locus = factor(locus, levels = c("IGH", "IGK", "IGL", "TRA", "TRB")))
+
+umis_combined_plot <- df_all_umis %>%
+  ggplot(aes(x = factor(rank), y = count_spbc, label = umi)) +
+  geom_col(width = 0.85) +
+  geom_text(angle = 90, size = 1.5, hjust = -0.05) +
+  facet_grid(method ~ locus, scales = "free", space = "free_x") +
+  coord_cartesian(ylim = c(0, 95),clip = "off") +
+  labs(x = "UMIs ranked by number of SPBCs", y = "Number of SPBCs\nper UMI") +
+  theme_bw(base_size = 7) +
+  theme(panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text.x = element_text(size = 6.5, color = "black"),
+    strip.text.y = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(2, 2, 2, 2),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+```
+
+```{r, fig.width=4, fig.height=4.5}
+s2_b <- umis_combined_plot + plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+s2_b
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp2/intermediates/")
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+saveRDS(s2_b, file=file.path(save_dir, "s2_b.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,360 @@
+---
+title: "g2"
+author: "Jonas Schuck"
+date: "2026-02-21"
+output: html_document
+---
+
+########################################
+#
+# Script contains subsampling analysis for additional groups from the additional 
+# spAIRR samples (S2_ONT_Q17 and S3_ONT_Q17) comparing consensus sequences generated
+# across severall subsamples from the same UMI-SPBC group G2 (CAGACCTGTAAGTGTTACGCTACCTCAC) (S2_ONT_Q17) and compared
+# V-region identity between subsample-consensus and consensus sequence of the 
+# full group.
+#
+# Comparison falls in the FWR1-FWR4 region, matching anchors and productivity status
+# are determined by pasting the consensus sequences into IgBLAST. Productivity status
+# is ommited in this figure because multiple groups are aggregated.
+#
+# Results are shown in LongAIRR Fig. S3
+#
+########################################
+
+```{r, message=FALSE, warning=FALSE}
+library(Biostrings)
+library(msa)
+library(stringdist)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(patchwork)
+```
+
+--------------------S3_B-------------------
+-----G2 S2_ONT_Q17 subsampling - CAGACCTGTAAGTGTTACGCTACCTCAC
+------------------------------------------
+
+```{r}
+#full group
+sp7_g2_ig_gt_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10000/s_1/", "4_longairr_consensus.fasta")
+
+#subsamples
+sp7_g2_n1000_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1000/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n1000_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1000/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n1000_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1000/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n1000_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1000/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n1000_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1000/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n750_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_750/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n750_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_750/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n750_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_750/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n750_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_750/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n750_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_750/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n500_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_500/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n500_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_500/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n500_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_500/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n500_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_500/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n500_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_500/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n250_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_250/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n250_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_250/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n250_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_250/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n250_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_250/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n250_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_250/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n100_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_100/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n100_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_100/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n100_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_100/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n100_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_100/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n100_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_100/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n50_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_50/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n50_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_50/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n50_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_50/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n50_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_50/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n50_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_50/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n10_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n10_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n10_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n10_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n10_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_10/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n5_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_5/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n5_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_5/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n5_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_5/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n5_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_5/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n5_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_5/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n4_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_4/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n4_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_4/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n4_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_4/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n4_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_4/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n4_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_4/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n3_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_3/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n3_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_3/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n3_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_3/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n3_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_3/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n3_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_3/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n2_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_2/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n2_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_2/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n2_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_2/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n2_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_2/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n2_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_2/s_5/", "4_longairr_consensus.fasta")
+
+sp7_g2_n1_s1_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1/s_1/", "4_longairr_consensus.fasta")
+sp7_g2_n1_s2_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1/s_2/", "4_longairr_consensus.fasta")
+sp7_g2_n1_s3_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1/s_3/", "4_longairr_consensus.fasta")
+sp7_g2_n1_s4_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1/s_4/", "4_longairr_consensus.fasta")
+sp7_g2_n1_s5_path <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp7/2_results/group2_CAGACCTGTAAGTGTTACGCTACCTCAC/n_1/s_5/", "4_longairr_consensus.fasta")
+
+```
+
+---------------------------------Function setup---------------------------------
+
+```{r}
+compute_hamming_similarity <- function(seq1, seq2, trim_start = 0, trim_end = 0) {
+  alignment <- msa(c(seq1, seq2), method = "Muscle")
+  aligned <- as.character(alignment)
+  start <- trim_start + 1
+  end <- nchar(aligned[[1]]) - trim_end
+  trimmed1 <- substr(aligned[[1]], start, end)
+  trimmed2 <- substr(aligned[[2]], start, end)
+  hamming <- stringdist(trimmed1, trimmed2, method = "hamming")
+  percent <- 100 - (hamming / nchar(trimmed2)) * 100
+  return(c(hamming = hamming, similarity_percent = percent))
+}
+
+```
+
+```{r}
+
+compute_motif_similarity <- function(gt_seq, query_seq,
+                                     constant_motif, fwr1_motif,
+                                     max_mismatch = 2,
+                                     min_query_frac = 0.9,
+                                     gap_open = 10, gap_ext = 4) {
+  # Convert to character (in case DNAStringSet is passed)
+  gt_seq <- as.character(gt_seq)[[1]]
+  query_seq <- as.character(query_seq)[[1]]
+  
+  # find constant / variable motifs in gt
+  start_gt <- matchPattern(constant_motif, gt_seq, with.indels = TRUE)
+  stop_gt <- matchPattern(fwr1_motif, gt_seq, with.indels = TRUE)
+  
+  # find constant / variable motifs in subsamples
+  start_sub <- matchPattern(constant_motif, query_seq, max.mismatch = max_mismatch)
+  stop_sub <- matchPattern(fwr1_motif, query_seq, max.mismatch = max_mismatch)
+  
+  if (length(start_gt) == 0 || length(stop_gt) == 0 ||
+      length(start_sub) == 0 || length(stop_sub) == 0) {
+    stop("Could not find motifs in one of the sequences")
+  }
+  
+  # trim sequences based on motif boundaries
+  trimmed_gt <- substr(gt_seq, start(start_gt)[1], end(stop_gt)[length(stop_gt)])
+  trimmed_query <- substr(query_seq, start(start_sub)[1], end(stop_sub)[length(stop_sub)])
+  
+  len_gt <- nchar(trimmed_gt)
+  len_query <- nchar(trimmed_query)
+  
+  if (len_query < len_gt * min_query_frac) {
+    stop(sprintf("Query too short: query length = %d, ground truth length = %d (must be ≥%.0f%% of GT)",
+                 len_query, len_gt, min_query_frac * 100))
+  }
+  
+  # align trimmed sequences (subsamples with gt)
+  aln <- pairwiseAlignment(pattern = trimmed_query, subject = trimmed_gt,
+                           type = "global", gapOpening = gap_open, gapExtension = gap_ext)
+  
+  aligned_gt <- as.character(alignedSubject(aln))
+  aligned_query <- as.character(alignedPattern(aln))
+  
+  stopifnot(nchar(aligned_gt) == nchar(aligned_query))
+  
+  # compute Hamming distance & percent similarity
+  hamming <- stringdist(aligned_gt, aligned_query, method = "hamming")
+  similarity <- 100 - (hamming / nchar(aligned_gt)) * 100
+  
+  return(c(hamming = hamming, similarity_percent = similarity))
+}
+
+```
+
+---------------------------------set up input list------------------------------
+
+```{r}
+sp7_g2_ig_gt <- readDNAStringSet(sp7_g2_ig_gt_path)
+
+sp7_g2_ig_paths <- list(
+  n1000 = list(s1 = sp7_g2_n1000_s1_path, s2 = sp7_g2_n1000_s2_path, s3 = sp7_g2_n1000_s3_path,
+               s4 = sp7_g2_n1000_s4_path, s5 = sp7_g2_n1000_s5_path),
+  n750 =  list(s1 = sp7_g2_n750_s1_path,  s2 = sp7_g2_n750_s2_path,  s3 = sp7_g2_n750_s3_path,
+               s4 = sp7_g2_n750_s4_path,  s5 = sp7_g2_n750_s5_path),
+  n500 =  list(s1 = sp7_g2_n500_s1_path,  s2 = sp7_g2_n500_s2_path,  s3 = sp7_g2_n500_s3_path,
+               s4 = sp7_g2_n500_s4_path,  s5 = sp7_g2_n500_s5_path),
+  n250 =  list(s1 = sp7_g2_n250_s1_path,  s2 = sp7_g2_n250_s2_path,  s3 = sp7_g2_n250_s3_path,
+               s4 = sp7_g2_n250_s4_path,  s5 = sp7_g2_n250_s5_path),
+  n100 =  list(s1 = sp7_g2_n100_s1_path,  s2 = sp7_g2_n100_s2_path,  s3 = sp7_g2_n100_s3_path,
+               s4 = sp7_g2_n100_s4_path,  s5 = sp7_g2_n100_s5_path),
+  n50 =   list(s1 = sp7_g2_n50_s1_path,   s2 = sp7_g2_n50_s2_path,   s3 = sp7_g2_n50_s3_path,
+               s4 = sp7_g2_n50_s4_path,   s5 = sp7_g2_n50_s5_path),
+  n10 =   list(s1 = sp7_g2_n10_s1_path,   s2 = sp7_g2_n10_s2_path,   s3 = sp7_g2_n10_s3_path,
+               s4 = sp7_g2_n10_s4_path,   s5 = sp7_g2_n10_s5_path),
+  n5 =    list(s1 = sp7_g2_n5_s1_path,    s2 = sp7_g2_n5_s2_path,    s3 = sp7_g2_n5_s3_path,
+               s4 = sp7_g2_n5_s4_path,    s5 = sp7_g2_n5_s5_path),
+  n4 =    list(s1 = sp7_g2_n4_s1_path,    s2 = sp7_g2_n4_s2_path,    s3 = sp7_g2_n3_s3_path,
+               s4 = sp7_g2_n4_s4_path,    s5 = sp7_g2_n4_s5_path),
+  n3 =    list(s1 = sp7_g2_n3_s1_path,    s2 = sp7_g2_n3_s2_path,    s3 = sp7_g2_n3_s3_path,
+               s4 = sp7_g2_n3_s4_path,    s5 = sp7_g2_n3_s5_path),
+  n2 =    list(s1 = sp7_g2_n2_s1_path,    s2 = sp7_g2_n2_s2_path,    s3 = sp7_g2_n3_s3_path,
+               s4 = sp7_g2_n2_s4_path,    s5 = sp7_g2_n2_s5_path),
+  n1 =    list(s1 = sp7_g2_n1_s1_path,    s2 = sp7_g2_n1_s2_path,    s3 = sp7_g2_n1_s3_path,
+               s4 = sp7_g2_n1_s4_path,    s5 = sp7_g2_n1_s5_path)
+)
+
+```
+
+productivity info (retrivied from IgBLAST)
+```{r}
+# manual annotation of all subsample sequences using web version of igblast
+# TRUE if sequence is productive, does NOT contain Stop-codon 
+productivity_info_g2 <- tibble(
+  n = c("gt", "gt", "gt", "gt", "gt",
+        "n1000", "n1000", "n1000", "n1000", "n1000",
+         "n750", "n750", "n750", "n750", "n750",
+         "n500", "n500", "n500", "n500", "n500",
+         "n250", "n250", "n250", "n250", "n250",
+         "n100", "n100", "n100", "n100", "n100",
+          "n50", "n50", "n50", "n50", "n50",
+          "n10", "n10", "n10", "n10", "n10",
+           "n5", "n5", "n5", "n5", "n5",
+           "n4", "n4", "n4", "n4", "n4",
+           "n3", "n3", "n3", "n3", "n3",
+           "n2", "n2", "n2", "n2", "n2",
+           "n1", "n1", "n1", "n1", "n1"),
+  replicate = c("s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5",
+                "s1", "s2", "s3", "s4", "s5"),
+  productive = c(TRUE, TRUE, TRUE, TRUE, TRUE, #gt
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n1000 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n750 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n500 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n250 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n100 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n50 done
+                 TRUE, TRUE, TRUE, TRUE, TRUE, #n10 done
+                  TRUE, TRUE, TRUE, TRUE, TRUE, 
+                 TRUE, TRUE, TRUE, TRUE, TRUE, 
+                FALSE, TRUE, TRUE, TRUE, TRUE, 
+                 TRUE, TRUE, TRUE, TRUE, TRUE, 
+                 TRUE, FALSE, FALSE, TRUE, FALSE) #n1 done
+)
+
+```
+
+-------------------------------use functions
+
+```{r, warning=FALSE}
+
+results_sp7_g2_ig_masked <- list()
+results_sp7_g2_ig_masked$gt <- compute_hamming_similarity(sp7_g2_ig_gt, sp7_g2_ig_gt)
+
+for (size in names(sp7_g2_ig_paths)) {
+  for (rep_id in names(sp7_g2_ig_paths[[size]])) {
+    seq <- Biostrings::readDNAStringSet(sp7_g2_ig_paths[[size]][[rep_id]])
+    sim_result_masked <- compute_motif_similarity(
+      gt_seq = sp7_g2_ig_gt,
+      query_seq = seq,  
+      constant_motif = "TGAGGAGACGGCGACAAGGG", #fwr4 end
+      fwr1_motif = "AGACTCCAGCAGCTGCACCT",
+      max_mismatch = 5
+    )
+    results_sp7_g2_ig_masked[[paste(size, rep_id, sep = "_")]] <- sim_result_masked
+  }
+}
+
+results_sp7_g2_ig_rec <- results_sp7_g2_ig_masked
+```
+
+```{r}
+results_g2_df <- do.call(rbind, lapply(names(results_sp7_g2_ig_rec), function(name) {
+                                    parts <- strsplit(name, "_")[[1]]
+                                    n_val <- parts[1]
+                                    rep_val <- parts[2]
+                                    df <- as.data.frame(t(results_sp7_g2_ig_rec[[name]]))
+                                    df$n <- n_val
+                                    df$replicate <- rep_val
+                                    df
+                                  }))
+```
+
+Show hamming dataframe across all subsample sizes and seed replicates
+```{r}
+results_g2_df$sample <- "sp7_g2_igh_rec"
+results_g2_df[1,]$replicate <- "s1"
+results_g2_df <- as_tibble(results_g2_df)
+
+head(results_g2_df, n=10)
+```
+
+Generate gt replicates (exact copies)
+```{r}
+#gt replicates
+new_rows <- tibble(hamming = c(0, 0, 0, 0), similarity_percent = rep(100.00000, 4), n = rep("gt", 4), replicate = c("s2", "s3", "s4", "s5"), sample = rep("sp7_g2_igh_rec", 4))
+
+# Find position of the first gt row
+insert_pos <- which(results_g2_df$n == "gt" & results_g2_df$replicate == "s1")[1]
+
+# Create new df by row binding manually
+results_g2_df <- bind_rows(results_g2_df[1:insert_pos, ], new_rows, results_g2_df[(insert_pos + 1):nrow(results_g2_df), ])
+```
+
+add productivty information
+```{r}
+results_df_prod <- results_g2_df %>%
+  pivot_longer(cols = c(hamming, similarity_percent), 
+               names_to = "metric", 
+               values_to = "value") %>%
+  mutate(group = paste(n, replicate, sep = "_"),
+    n_numeric = as.numeric(gsub("n", "", n)),
+    n_numeric = ifelse(n == "gt", 10000, n_numeric)) %>%
+  left_join(productivity_info_g2, by = c("n", "replicate"))
+```
+
+```{r}
+results_df_prod$n_ordered <- factor(results_df_prod$n,
+                                    levels = c("n1", "n2", "n3", "n4", "n5", "n10", "n50", "n100", "n250", "n500", "n750", "n1000", "gt"),
+                                    labels = c("1", "2", "3", "4", "5", "10", "50", "100", "250", "500", "750", "1000", "gt"))
+
+```
+
+save g2
+```{r}
+save_dir <- file.path(save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_g1_g2_g3_g4_b/"))
+saveRDS(results_df_prod, file=file.path(save_dir, "g2.RDS"))
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+

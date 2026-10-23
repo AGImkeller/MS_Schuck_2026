@@ -1,0 +1,350 @@
+---
+title: "supp1_a"
+author: "Jonas Schuck"
+date: "2026-02-18"
+output: html_document
+---
+
+########################################
+#
+# Script contains analysis to compute retention of reads throughout the different
+# LongAIRR processing steps determined by the summary.tsv generated during
+# LongAIRR processing for each dataset.
+#
+# We compare additional Visium V1 samples supporting Fig. 2e (S1_ONT_Q17, S2_ONT_Q17, S3_ONT_Q17)
+#
+# Results are shown in LongAIRR Fig. S1
+#
+########################################
+
+```{r}
+library(dplyr)
+library(stringr)
+library(readr)
+library(tibble)
+library(purrr)
+library(ggplot2)
+library(patchwork)
+library(cowplot)
+library(ggtext)   
+library(grid) 
+```
+
+--------------------S1_A-------------------
+-----LongAIRR read retention (Visium V1)
+------------------------------------------
+
+```{r}
+theme_panel2_main <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text  = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    plot.margin  = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA))
+
+theme_panel2_table <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid   = element_blank(),
+    axis.ticks   = element_blank(),
+    axis.text.x  = element_text(size = 6, color = "black"),
+    axis.text.y  = ggtext::element_markdown(size = 6, hjust = 1),
+    panel.border = element_rect(color = NA, fill = NA),
+    plot.margin  = margin(t = 0, r = 0, b = 0, l = 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA))
+```
+
+
+```{r}
+summary_sp07 <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp7_sd17_af5/", "summary.tsv")
+summary_sp08 <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/", "summary.tsv")
+summary_sp12 <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/", "summary.tsv")
+```
+
+----------------
+
+read in summary.tsv from longairr
+```{r}
+samples_list <- list(
+  S1_ONT_Q17 = summary_sp12,
+  S2_ONT_Q17 = summary_sp07,
+  S3_ONT_Q17 = summary_sp08)
+
+# input parameters
+samples <- tibble::tibble(
+  sample      = names(samples_list),
+  summary_tsv = unname(unlist(samples_list)),
+  add_total   = TRUE,
+  keep_branch = "both",
+  col         = c("#1F77B4", "#2CA02C", "#D62728"))
+
+sample_list <- samples$sample
+sample_cols <- setNames(samples$col, samples$sample)
+
+# read in summary.tsv for visium v1 samples
+read_summary_visium <- function(file, samplename,
+                               add_total_in_from_filtering = TRUE,
+                               keep_branch = c("both","TCR","Ig")) {
+
+  keep_branch <- match.arg(keep_branch)
+
+  raw <- read_delim(file, delim = "\t", skip = 2, col_types = cols(.default = readr::col_character()), trim_ws = TRUE) %>%
+    mutate(across(c(Step, PathInfo, InputDescription, OutputDescription), str_squish),
+      Step = str_remove(Step, "^>"),
+      InputReads = as.numeric(InputReads),
+      OutputReads = as.numeric(OutputReads))
+
+  filtering <- raw %>%
+    filter(Step == "Filtering") %>%
+    dplyr::slice(1)
+
+  consensus <- raw %>%
+    filter(Step == "Collapse", PathInfo == "Consensus") %>%
+    dplyr::slice(1)
+
+  shared <- tibble(Step = c("Filter_out", "Group_sets"), PathInfo = NA_character_,
+    OutputReads = c(filtering$OutputReads, consensus$OutputReads))
+
+  # add TOTAL_IN info (Input column in the Filter_out row)
+  if (add_total_in_from_filtering) {
+    shared <- bind_rows(tibble(Step="Total_in", PathInfo=NA_character_, OutputReads=filtering$InputReads), shared)}
+
+  seqtag <- raw %>%
+    filter(Step == "Seqtag", PathInfo %in% c("Ig","TCR")) %>%
+    transmute(Step = "Seqtag_out", PathInfo, OutputReads)
+
+  airr_out <- raw %>%
+    filter(Step == "AIRR", PathInfo %in% c("Ig","TCR"),
+      str_detect(OutputDescription, regex("^Sequences with valid V\\(D\\)J annotation$", ignore_case = TRUE))) %>%
+    transmute(Step = "AIRR_out", PathInfo, OutputReads)
+
+  airr_prod <- raw %>%
+    filter(Step == "AIRRRate", PathInfo %in% c("Ig","TCR")) %>%
+    transmute(Step = "AIRR_prod", PathInfo, OutputReads)
+
+  branches <- bind_rows(seqtag, airr_out, airr_prod)
+
+  # keep only one branch post-split // e.g. only TCR or BCR
+  if (keep_branch != "both") {
+    branches <- branches %>%
+      filter(PathInfo == keep_branch)
+  }
+
+  # annotation to split lines into loci-branches
+  bind_rows(shared, branches) %>%
+    mutate(sample = samplename,
+      sample_receptor = case_when(
+        PathInfo == "TCR" ~ paste0(sample, "_TCR"),
+        PathInfo == "Ig"  ~ paste0(sample, "_BCR"),
+        TRUE              ~ paste0(sample, "_BCR"))) #shared rows
+}
+
+```
+
+
+#-------use functions
+
+```{r}
+steps_levels <- c("Total_in","Filter_out","Group_sets","Seqtag_out","AIRR_out","AIRR_prod")
+
+df_visium <- samples %>%
+  mutate(data = map2(summary_tsv,
+                     sample,~ read_summary_visium(.x, .y,
+                                                  add_total_in_from_filtering = TRUE,
+                                                  keep_branch = keep_branch[samples$sample == .y]))) %>%
+  pull(data) %>%
+  bind_rows() %>%
+  mutate(Step   = factor(Step, levels = steps_levels),
+         sample = factor(sample, levels = sample_list))
+
+```
+
+data wrangling to include different line types
+```{r}
+umi_rows <- df_visium %>%
+  filter(Step == "Group_sets") %>%
+  distinct(sample, OutputReads, .keep_all = TRUE)
+
+df_visium <- df_visium %>%
+  filter(Step != "Group_sets") %>%
+  bind_rows(umi_rows %>% mutate(sample_receptor = paste0(sample, "_BCR")),
+            umi_rows %>% mutate(sample_receptor = paste0(sample, "_TCR"))) %>%
+  mutate(receptor  = if_else(str_detect(sample_receptor, "TCR"), "TCR", "BCR"),
+         is_shared = Step %in% c("Total_in", "Filter_out", "Group_sets"),
+         is_post   = Step %in% c("Group_sets", "Seqtag_out", "AIRR_out", "AIRR_prod"))
+```
+
+retention curves figure
+```{r}
+# positions for line-type legends
+key_x0 <- 1
+key_y0 <- min(df_visium$OutputReads, na.rm = TRUE) * 40
+
+receptor_key <- tibble::tibble(
+  x1    = key_x0,
+  x2    = key_x0 + 0.46,
+  x_lab = key_x0 + 0.50,
+  y     = key_y0 * c(0.95, 0.3, 0.1),
+  label = c("Shared processing", "BCR only", "TCR only"),
+  lty   = c("solid", "longdash", "dotdash"),
+  lwd   = c(1.75, 1, 1))
+
+split_label_y <- max(df_visium$OutputReads, na.rm = TRUE) / 2.5
+
+spatial_retention <- ggplot(df_visium, aes(Step, OutputReads, group = sample_receptor)) +
+  geom_vline(xintercept = 2.5, linetype = "dashed", linewidth = 0.35, color = "grey65") +
+  geom_line(data = df_visium %>% filter(is_shared) %>% mutate(group_shared = sample),
+            aes(color = sample, group = group_shared), linewidth = 1.1) +
+  geom_line(data = df_visium %>% filter(is_post), aes(color = sample, linetype = receptor), linewidth = 0.7) +
+  geom_point(aes(color = sample), size = 1.2) +
+  annotate("text", x = 1.5, y = Inf, label = "Raw reads", vjust = 1.3, size = 2.6, fontface = "bold", color = "black") +
+  annotate("text", x = 4.5, y = Inf, label = "Consensus sequences", vjust = 1.3, size = 2.6, fontface = "bold", color = "black") +
+  scale_color_manual(values = sample_cols) +
+  scale_linetype_manual(values = c(BCR = "longdash", TCR = "dotdash")) +
+  scale_y_log10(labels = scales::label_number(accuracy = 1),
+    breaks = scales::log_breaks(n = 9)) +
+  guides(linetype = "none", color = guide_legend(byrow = TRUE)) +
+  labs(y = "Number of reads", x = NULL, color = "Sample") +
+  theme_panel2_main +
+  theme(
+  axis.text.x  = element_blank(),
+  axis.title.x = element_blank(),
+  axis.title.y = element_text(size = 7, color = "black"),
+  axis.text.y  = element_text(size = 6, color = "black"),
+  legend.position = "right",
+  legend.direction = "vertical",
+  #legend.background = element_rect(fill = "gray91", color = NA),
+  #legend.key.height = unit(0.28, "cm"),
+  #legend.key.width  = unit(0.45, "cm"),
+  legend.title = element_text(size = 6.5, color = "black"),
+  legend.text  = element_text(size = 6, color = "black"),
+  panel.border = element_rect(linewidth = 0.2),
+  plot.margin  = margin(t = 2, r = 2, b = 2, l = 0)) +
+  geom_label(data = tibble(x = 3.5, y = 2000000.15, label = "Split by locus"),
+    aes(x = x, y = y, label = label), inherit.aes = FALSE, size = 2.6, hjust = 0, fill = "gray91", label.size = 0, label.padding = unit(0.10, "lines")) +
+  geom_segment(data = receptor_key, aes(x = x1, xend = x2, y = y, yend = y), inherit.aes = FALSE, linewidth = receptor_key$lwd * 0.65, linetype  = receptor_key$lty, colour = "black") +
+  geom_label(data = receptor_key, aes(x = x_lab, y = y, label = label), inherit.aes = FALSE, hjust = 0, size = 2.6, fill = "gray91", label.size = 0,
+    label.padding = unit(0.08, "lines"), label.r = unit(0.12, "lines"))
+```
+
+
+------build table with retention numbers
+
+```{r}
+extract_outputs <- function(df, pathinfo, umi_index = 1) {
+  c(Total_in   = df$OutputReads[df$Step == "Total_in"][1],
+    Filter_out = df$OutputReads[df$Step == "Filter_out"][1],
+    Group_sets = df$OutputReads[df$Step == "Group_sets"][umi_index],
+    Seqtag_out = df$OutputReads[df$Step == "Seqtag_out" & df$PathInfo == pathinfo][1],
+    AIRR_out   = df$OutputReads[df$Step == "AIRR_out"   & df$PathInfo == pathinfo][1],
+    AIRR_prod  = df$OutputReads[df$Step == "AIRR_prod"  & df$PathInfo == pathinfo][1])
+}
+```
+
+```{r}
+sample_order <- c("S1_ONT_Q17", "S2_ONT_Q17", "S3_ONT_Q17")
+
+# match umi row in the table to corresponding loci
+branches <- tribble(
+  ~sample,      ~branch, ~umi_index,
+  "S1_ONT_Q17",  "Ig",     1,
+  "S1_ONT_Q17",  "TCR",    2,
+  "S2_ONT_Q17",  "Ig",     1,
+  "S2_ONT_Q17",  "TCR",    2,
+  "S3_ONT_Q17",  "Ig",     1,
+  "S3_ONT_Q17",  "TCR",    2) %>%
+  mutate(sample = factor(sample, levels = sample_order), branch = factor(branch, levels = c("Ig", "TCR"))) %>%
+  arrange(sample, branch)
+```
+
+
+
+```{r}
+table_numeric <- branches %>%
+  rowwise() %>%
+  mutate(values = list(
+      extract_outputs(
+        df_visium %>% dplyr::filter(.data$sample == .env$sample),
+        pathinfo  = as.character(branch),
+        umi_index = umi_index))) %>%
+  tidyr::unnest_wider(values) %>%
+  ungroup() %>%
+  mutate(Sample_display = dplyr::case_when(branch == "Ig" ~ paste0(as.character(sample), ": BCR"), TRUE ~ "TCR"))
+
+# collapse for same dataset (identical number up until seqtag_out)
+cols_to_collapse <- c("Total_in", "Filter_out", "Group_sets")
+
+# which samples have BOTH Ig and TCR rows?
+samples_with_both <- table_numeric %>%
+  distinct(sample, branch) %>%
+  dplyr::count(sample) %>%
+  filter(n == 2) %>%
+  pull(sample)
+
+# add "" in TCR rows
+table_display <- table_numeric %>%
+  mutate(do_collapse = (branch == "TCR") & (sample %in% samples_with_both)) %>%
+  mutate(across(all_of(cols_to_collapse),
+           ~ if_else(do_collapse, "\"", as.character(.x)))) %>%
+  mutate(across(-c(sample, branch, umi_index, Sample_display, do_collapse),
+           ~ if_else(is.na(.x), "/", as.character(.x)))) %>%
+  select(-do_collapse)
+
+
+tbl_df <- table_display %>%
+  mutate(row_id        = row_number(),
+         Sample_factor = factor(row_id, levels = rev(row_id)),
+         row_parity    = if_else(row_id %% 2 == 1, "odd", "even"),
+         group_color   = unname(sample_cols[as.character(sample)]))
+
+# html element for proper colored label display in the table
+labels_named <- setNames(sprintf("<span style='color:%s; font-weight:bold'>%s</span>", tbl_df$group_color, tbl_df$Sample_display), tbl_df$Sample_factor)
+
+tbl_long <- tbl_df %>%
+  pivot_longer(
+    cols = c(Total_in, Filter_out, Group_sets, Seqtag_out, AIRR_out, AIRR_prod),
+    names_to  = "Step",
+    values_to = "value") %>%
+  mutate(Step = factor(Step, levels = c("Total_in","Filter_out","Group_sets","Seqtag_out","AIRR_out","AIRR_prod")))
+```
+
+
+table as figure
+```{r}
+table_plot <- ggplot(tbl_long, aes(x = Step, y = Sample_factor)) +
+  geom_tile(aes(fill = row_parity), width = 0.95, height = 0.95, color = NA) +
+  scale_fill_manual(values = c(odd = "#F5F5F5", even = "#E0E0E0"), guide = "none") +
+  geom_text(aes(label = value), size = 2.5, color = "black") +
+  scale_y_discrete(labels = labels_named, name = NULL) +
+  scale_x_discrete(position = "top", name = NULL) +
+  theme_panel2_table +
+  theme(
+    axis.text.x = element_text(size = 6, color = "black"),
+    axis.text.y = ggtext::element_markdown(size = 6, hjust = 1))
+```
+
+
+combined curves and table figure
+```{r, fig.width=7, fig.height=3.8}
+aligned_fig_table <- free(spatial_retention, type = "label") / table_plot +
+                     plot_layout(heights = c(0.61, 0.6))
+
+p_retention_3 <- plot_grid(aligned_fig_table)
+
+s1_a <- p_retention_3 + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, r=30)))
+s1_a
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp1/intermediates/")
+saveRDS(s1_a, file=file.path(save_dir, "s1_a.RDS"))
+```
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,86 @@
+---
+title: "p5"
+author: "Jonas Schuck"
+date: "2026-04-10"
+output: html_document
+---
+
+######################################## 
+# 
+# Figure assembly LongAIRR Figure P5
+# 
+######################################## 
+
+```{r}
+library(png)
+library(cowplot)
+library(ggplot2)
+```
+
+#read in intermediates
+
+```{r}
+
+#A (tapestation)
+f_5a <- png::readPNG("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/filtering.png")  
+p5_a <- ggdraw() + draw_image(f_5a)
+
+#B C D (q vs length)
+p5_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/p5_b.rds")
+p5_c <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/p5_c.rds")
+p5_d <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/p5_d.rds")
+p5_e <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/p5_e.rds")
+p5_f <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/p5_f.rds")
+```
+
+------------------------------------------------------------------------
+
+#----fig 5
+
+extra margin for a
+
+```{r, fig.width=7, fig.height=3}
+p5_a <- p5_a + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=15, 5, 5, 5))) 
+p5_ab <- plot_grid(p5_a, p5_b, labels = c("a", "b"), label_size = 7, ncol=2, rel_widths = c(0.8, 1),   hjust = -0.8,
+  vjust = 1.0)
+p5_ab 
+```
+
+```{r, fig.width=3.5, fig.height=3}
+p5_d_e <- plot_grid(p5_d, p5_e, labels = c("d", "e"), label_size = 7, nrow = 2, hjust = -0.8, vjust = 0)
+p5_d_e
+```
+
+```{r}
+p5_c_f <- plot_grid(p5_c, p5_f, labels=c("c", "f"), label_size = 7, nrow =2, rel_heights = c(0.7,0.5))
+p5_c_f
+```
+
+```{r, fig.width=7}
+p5_b_c_f<- plot_grid(p5_c_f, p5_d_e, label_size = 7, ncol = 2, hjust = -0.8, vjust = 1.0, rel_widths = c(0.95, 0.8))
+p5_b_c_f
+```
+
+```{r, fig.width=8, fig.height=5}
+p5_full_new <- plot_grid(p5_ab, p5_b_c_f, nrow=2, rel_heights = c(0.85,1))
+p5_full_new
+```
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p5.pdf", plot=p5_full_new,width = 8.5, height = 5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p5.png", plot=p5_full_new,width = 8.5, height = 5)
+```
+
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+

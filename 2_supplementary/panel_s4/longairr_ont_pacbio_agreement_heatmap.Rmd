@@ -1,0 +1,285 @@
+---
+title: "LongAIRR ONT-PacBio matched-group agreement"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains the comparison of repertoire characteristics between
+# matching ONT and PacBio UMI-SPBC groups across downstream filtering
+# strategies Base, F1, F2 and F3
+#
+# Results are shown in LongAIRR Fig. S4
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(scales)
+```
+
+--------------------S4--------------
+--------------ONT-PacBio agreement--
+------------------------------------
+
+```{r}
+dir_ont_bcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv")
+dir_ont_tcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tr_p_parse-select.tsv")
+
+dir_pacbio_bcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/ig_p_parse-select.tsv")
+dir_pacbio_tcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/tr_p_parse-select.tsv")
+
+filter_min_counts <- c("Base" = 1L, "F1" = 2L, "F2" = 3L, "F3" = 4L)
+#filter_min_counts <- c("All reads" = 1L, "Cons. > 1" = 2L, "Cons. > 2" = 3L)
+```
+
+read and prepare AIRR tables
+```{r}
+first_call <- function(x) {
+  str_trim(str_split_fixed(as.character(x), ",", 2)[, 1])
+}
+
+gene_without_allele <- function(x) {
+  str_remove(first_call(x), "\\*.*$")
+}
+
+read_airr <- function(path, platform_name, receptor_group, loci) {
+  read_tsv(path, show_col_types = FALSE, col_types = cols(.default = col_character())) %>%
+    mutate(
+      consensus_count = as.integer(consensus_count),
+      v_region_sequence = str_sub(toupper(sequence), start = as.integer(v_sequence_start), end = as.integer(v_sequence_end)),
+      junction_aa = coalesce(na_if(as.character(junction_aa), ""), as.character(alakazam::translateDNA(as.character(junction)))),
+      platform = platform_name,
+      receptor_group = receptor_group,
+      match_id = as.character(group),
+      v_gene = gene_without_allele(v_call),
+      j_gene = gene_without_allele(j_call),
+      junction_nt = toupper(junction),
+      junction_aa = toupper(junction_aa),
+      c_gene = str_remove(c_call, "\\*.*$")
+    ) %>%
+    filter(locus %in% loci,
+           !is.na(c_call) & str_sub(c_call, 1, 3) == locus,
+           !grepl("TTTTTTTTTTT", umi),
+           !grepl("N", junction_nt),
+           !grepl("N", v_region_sequence))
+}
+
+airr_comparison <- bind_rows(
+  read_airr(dir_ont_bcr, "ONT", "BCR", c("IGH", "IGK", "IGL")),
+  read_airr(dir_ont_tcr, "ONT", "TCR", c("TRA", "TRB")),
+  read_airr(dir_pacbio_bcr, "PacBio", "BCR", c("IGH", "IGK", "IGL")),
+  read_airr(dir_pacbio_tcr, "PacBio", "TCR", c("TRA", "TRB"))
+)
+```
+
+pair matching ONT and PacBio groups
+```{r}
+pair_columns <- c(
+  "receptor_group", "match_id", "consensus_count", "v_gene", "j_gene",
+  "junction_nt", "junction_aa", "c_gene", "v_region_sequence"
+)
+
+ont_comparison <- airr_comparison %>%
+  filter(platform == "ONT") %>%
+  select(all_of(pair_columns))
+
+pacbio_comparison <- airr_comparison %>%
+  filter(platform == "PacBio") %>%
+  select(all_of(pair_columns))
+
+matched_base <- inner_join(
+  ont_comparison,
+  pacbio_comparison,
+  by = c("receptor_group", "match_id"),
+  suffix = c("_ONT", "_PacBio")) %>%
+  mutate(
+    same_v_gene = v_gene_ONT == v_gene_PacBio,
+    same_j_gene = j_gene_ONT == j_gene_PacBio,
+    same_junction_aa = junction_aa_ONT == junction_aa_PacBio,
+    same_junction_nt = junction_nt_ONT == junction_nt_PacBio,
+    same_c_gene = c_gene_ONT == c_gene_PacBio
+  )
+```
+
+calculate V-region sequence identity
+```{r}
+pairwise_v_identity <- function(ont_sequence, pacbio_sequence) {
+  alignment <- pwalign::pairwiseAlignment(
+    Biostrings::DNAString(ont_sequence),
+    Biostrings::DNAString(pacbio_sequence),
+    type = "global"
+  )
+
+  as.numeric(pwalign::pid(alignment, type = "PID1")) / 100
+}
+
+matched_base <- matched_base %>%
+  mutate(
+    v_region_identity = map2_dbl(
+      v_region_sequence_ONT,
+      v_region_sequence_PacBio,
+      pairwise_v_identity
+    )
+  )
+```
+
+apply downstream filtering strategies
+```{r}
+matched_pairs <- purrr::imap_dfr(filter_min_counts, function(min_count, filter_name) {
+  matched_base %>%
+    filter(consensus_count_ONT >= min_count,
+           consensus_count_PacBio >= min_count) %>%
+    mutate(comparison_filter = filter_name)
+})
+```
+
+prepare heatmap data
+```{r}
+metric_definitions <- tribble(
+  ~metric, ~label, ~plot_order, ~metric_type,
+  "same_v_gene", "V gene\n   annotation", 1L, "exact",
+  "same_j_gene", "J gene\n   annotation", 2L, "exact",
+  "same_junction_aa", "Junction seq.\n      (AA)", 3L, "exact",
+  "same_junction_nt", "Junction seq.\n  (nucleotide)", 3L, "exact",
+  "same_c_gene", "Constant-region\ngene annotation", 5L, "exact",
+  "v_region_identity", "V-region seq.\nidentity (mean)", 4L, "identity"
+)
+
+filter_plot_data <- matched_pairs %>%
+  select(receptor_group, comparison_filter, match_id, all_of(metric_definitions$metric)) %>%
+  pivot_longer(
+    cols = all_of(metric_definitions$metric),
+    names_to = "metric",
+    values_to = "metric_value") %>%
+  left_join(metric_definitions, by = "metric") %>%
+  group_by(receptor_group, comparison_filter, metric, label, plot_order, metric_type) %>%
+  summarise(
+    n_evaluable = sum(!is.na(metric_value)),
+    n_exact = sum(metric_value == 1, na.rm = TRUE),
+    agreement = mean(metric_value, na.rm = TRUE),
+    .groups = "drop") %>%
+  mutate(
+    comparison_filter = factor(comparison_filter, levels = names(filter_min_counts)),
+    label = factor(label, levels = rev(metric_definitions$label)),
+    discordance = 1 - agreement,
+    agreement_label = if_else(
+      metric_type == "identity",
+      paste0("n=", n_evaluable, "\nMean ", percent(agreement, accuracy = 0.1)),
+      paste0(n_exact, "/", n_evaluable, "\n", percent(agreement, accuracy = 0.1))),
+    label_color = if_else(discordance >= 0.12, "white", "black"))
+
+#flip from disagreement to agreement measure
+filter_plot_data <- filter_plot_data %>%
+  mutate(agreement_label = if_else(metric_type == "identity",
+      paste0("n=", n_evaluable, "\n", percent(agreement, accuracy = 0.01)),
+      paste0(n_exact, "/", n_evaluable, "\n", percent(agreement, accuracy = 0.01))),
+    label_color = if_else(agreement >= 0.88, "white", "black"))
+```
+
+generate heatmap
+```{r}
+p_matched_filter_agreement <- ggplot(filter_plot_data,
+  aes(x = comparison_filter, y = label, fill = agreement)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = agreement_label, color = label_color),
+            size = 2.6, lineheight = 0.95) +
+    # geom_text(aes(label = agreement_label, color = label_color),
+    #         size = 3, lineheight = 0.95) +
+  scale_color_identity() +
+  facet_wrap(~ receptor_group, ncol = 1) +
+  scale_fill_gradientn(colors = c("#F7FBFF", "#DEEBF7", "#9ECAE1", "#4292C6", "#2171B5", "#08519C", "#08306B"),
+  limits = c(0.75, 1), breaks = c(0.75, 0.80, 0.85, 0.90, 0.95, 1),
+  labels = percent_format(accuracy = 1), oob = squish, name = "ONT–PacBio\nagreement") +
+  labs(x = "Consensus based filtering", y = NULL) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(face = "bold"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    strip.text = element_text(size = 6.5, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(t = 2, r = 2, b = 2, l = 2),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+```{r, fig.width=4.5, fig.height=4}
+p_matched_filter_agreement
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/")
+saveRDS(p_matched_filter_agreement, file = file.path(save_dir, "ps4_f.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+
+---------------------------
+
+# ESSB talk backup
+
+```{r}
+p_matched_filter_agreement <- ggplot(filter_plot_data,
+  aes(x = comparison_filter, y = label, fill = agreement)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  # geom_text(aes(label = agreement_label, color = label_color),
+  #           size = 2.6, lineheight = 0.95) +
+    geom_text(aes(label = agreement_label, color = label_color),
+            size = 3, lineheight = 0.95) +
+  scale_color_identity() +
+  facet_wrap(~ receptor_group, ncol = 1) +
+  scale_fill_gradientn(colors = c("#F7FBFF", "#DEEBF7", "#9ECAE1", "#4292C6", "#2171B5", "#08519C", "#08306B"),
+  limits = c(0.75, 1), breaks = c(0.75, 0.80, 0.85, 0.90, 0.95, 1),
+  labels = percent_format(accuracy = 1), oob = squish, name = "ONT–PacBio\nagreement") +
+  labs(x = "Filtering strategy", y = NULL) +
+  theme_bw(base_size = 9) +
+  # theme(
+  #   panel.grid = element_blank(),
+  #   panel.border = element_rect(linewidth = 0.2),
+  #   axis.title = element_text(size = 7, color = "black"),
+  #   axis.text = element_text(size = 6, color = "black"),
+  #   axis.text.x = element_text(face = "bold"),
+  #   legend.title = element_text(size = 6.5, color = "black"),
+  #   legend.text = element_text(size = 6, color = "black"),
+  #   strip.text = element_text(size = 6.5, face = "bold", color = "black"),
+  #   strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+  #   plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+  #   panel.background = element_rect(fill = "white", color = NA),
+  #   plot.background = element_rect(fill = "white", color = NA)
+  # )
+    theme(
+    panel.grid = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 9, color = "black"),
+    axis.text = element_text(size = 9, color = "black"),
+    axis.text.x = element_text(face = "bold"),
+    legend.title = element_text(size = 9, color = "black"),
+    legend.text = element_text(size = 9, color = "black"),
+    strip.text = element_text(size = 9, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+
+```{r, fig.width=4.5, fig.height=6}
+p_matched_filter_agreement
+```
+
+```{r}
+#ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/heat_small_presentation.png", plot=p_matched_filter_agreement, width = 4.5, height = 6)
+```
+
+

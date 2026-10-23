@@ -1,0 +1,709 @@
+---
+title: "LongAIRR Figure 6 lineage and zoom"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains the spatial distribution, spatial foci, noAF-AF lineage,
+# largest-focus zoom and cell-signature enrichment for one selected IGH clone.
+#
+# Results are shown in LongAIRR Fig. 6.
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(alakazam)
+library(shazam)
+library(scoper)
+library(dowser)
+library(ggtree)
+library(cowplot)
+library(ggforce)
+library(tiff)
+library(ggplot2)
+```
+
+file read-in
+```{r}
+AF_AIRR_PATH <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv")
+NOAF_AIRR_PATH <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/no_af_samples/sp12_ont_noaf/airr/tmp/ig/ig_db-pass.tsv")
+TISSUE_POSITIONS_PATH <- file.path("~/mnt_AG_Imkeller/experiments/chromium_visiusm_202510/202510_spaceranger_outputs_SO#52/SOI52_3_2459/outs/spatial/tissue_positions.csv") # spaceranger input
+UCELL_RDS_PATH <- file.path("~/mnt_AG_Imkeller/group_members/anchang/Glioblastoma_TLS_project/Visium/data/processed/sample3_2459_Gbmap_cell_signature_ucell_scores.rds") # internal ucell object
+IMGT_GERMLINE_DIR <- file.path("~/mnt_AG_Imkeller/group_members/schuck/code/germlines/imgt/human/vdj")
+ORIGINAL_TISSUE_IMAGE_PATH <- file.path("~/mnt_AG_Imkeller/group_members/ortega_iannazzo/spatial_transcriptomics/experiments/2025-03-27_SOI#52/slide_images/Visium_Image_Alignment/original/3_2459_Visium_250326.tif")
+```
+
+
+clone, lineage and spatial GEX parameters
+```{r}
+
+DETAIL_CLONE <- 43
+CLONE_THRESHOLD <- 0.15
+
+# Clone IDs are defined from F1
+CLONE_DEFINITION_MIN_CONSENSUS_COUNT <- 2L
+
+# Groups included in the spatial and lineage panels // additional filter parameter to only include groups affected by AF
+LINEAGE_MIN_CONSENSUS_COUNT <- 2L
+LINEAGE_MIN_N_ORIG <- 5L
+
+# Adaptive filtering is applied to groups with N_ORIG > 4.
+AF_APPLIED_MIN_N_ORIG <- 5L
+NPROC <- 8
+
+# tissue cut-offs to remove empty capture area
+TISSUE_CROP_LEFT <- 0.08
+TISSUE_CROP_RIGHT <- 0.95
+TISSUE_CROP_TOP <- 0.05
+TISSUE_CROP_BOTTOM <- 0.72
+
+# parameters for scale bars and zoom-in spot sizes
+VISIUM_NEIGHBOR_DISTANCE_UM <- 100
+VISIUM_SPOT_DIAMETER_UM <- 55
+TISSUE_SCALE_BAR_UM <- 1000
+ZOOM_SCALE_BAR_UM <- 500
+
+FOCUS_LINK_DISTANCE_UM <- 300
+ZOOM_FOCUS <- "Niche 1"
+ZOOM_PADDING_SPOTS <- 4
+ZOOM_RIGHT_PADDING_SPOTS <- 2.5
+
+# Saturated colors remain visible against the H&E tissue image.
+FOCUS_COLORS <- c("#0057FF", "#FFC400", "#00B83F", "#8A00FF", "#E6004C", "#7A4A00")
+ISOLATED_COLOR <- "black"
+
+SPATIAL_POINT_SIZE <- 1.5
+ZOOM_SYMBOL_SIZE <- 2
+
+# Selected spots / symbols for selected spots in zoom-in ucell figure
+HIGHLIGHT_SPOT_NUMBERS <- c(1L, 5L, 9L)
+HIGHLIGHT_SPOT_SHAPES <- c(24, 22, 25)
+
+UCELL_SIGNATURES <- c("B cell" = "B_cell_logcounts_UCell",
+                      "Plasma B" = "Plasma_B_logcounts_UCell",
+                      "T cell" = "CD4_CD8_logcounts_UCell",
+                      "Capillary endothelial" = "Endo_capilar_logcounts_UCell",
+                      "Perivascular fibroblast" = "Perivascular_fibroblast_logcounts_UCell",
+                      "Neural-like tumor" = "NPC_like_neural_logcounts_UCell",
+                      "Neuron" = "Neuron_logcounts_UCell")
+
+TREE_GRID_STEP <- 5
+AF_LABEL_OFFSET <- 2.2
+TREE_FOCUS_OFFSET <- 8
+#TREE_SPOT_OFFSET <- 6 # First symbol: distance from the left edge of the focus label
+TREE_SPOT_OFFSET <- 8 # First symbol: distance from the left edge of the focus label
+TREE_SPOT_SPACING <- 3 # Distance between symbols on the same node, in tree units
+TREE_SPOT_SIZE <- 1.8
+```
+
+functino to assign spatial foci using single-linkage clustering // also identifies isolated spots
+```{r}
+assign_spatial_foci <- function(spots, link_distance_px) {
+  focus_input <- spots %>%
+    distinct(spbc, image_x, image_y)
+
+  focus_input$focus_cluster <- cutree(
+    hclust(dist(focus_input %>% select(image_x, image_y)), method = "single"),
+    h = link_distance_px)
+
+  focus_labels <- focus_input %>%
+    group_by(focus_cluster) %>%
+    summarise(n_spots = n(), center_x = mean(image_x), center_y = mean(image_y), .groups = "drop") %>%
+    group_by(is_isolated = n_spots == 1) %>%
+    arrange(is_isolated, desc(n_spots), center_y, center_x, .by_group = TRUE) %>%
+    mutate(focus_number = row_number(),
+           focus_id = if_else(is_isolated, "Isolated", paste("Niche", focus_number))) %>%
+    ungroup()
+
+  focus_input %>%
+    left_join(focus_labels %>% select(focus_cluster, focus_id, is_isolated),
+      by = "focus_cluster")
+}
+```
+
+define the selected AF clone and its noAF status
+```{r}
+#read in
+af_raw <- readr::read_tsv(AF_AIRR_PATH, show_col_types = FALSE)
+noaf_raw <- readr::read_tsv(NOAF_AIRR_PATH, show_col_types = FALSE)
+
+# filter for IGH, apply downstream filters 
+af_igh <- af_raw %>%
+  select(-any_of(c("x", "y"))) %>%
+  mutate(group = as.character(group),
+        spbc = as.character(spbc),
+        umi = as.character(umi),
+        sequence_id = paste("AF", sequence_id, sep = "|"),
+        v_region_sequence = str_sub(toupper(sequence),
+        start = as.integer(v_sequence_start), end = as.integer(v_sequence_end)),
+        c_call_subfam = str_remove(c_call, "\\*.*$"),
+        junction_aa = coalesce(na_if(as.character(junction_aa), ""), as.character(alakazam::translateDNA(as.character(junction))))) %>%
+  filter(locus == "IGH",
+         !is.na(group), group != "",
+         !is.na(c_call), str_sub(c_call, 1, 3) == locus,
+         !str_detect(umi, "TTTTTTTTTTT"),
+         !is.na(junction), junction != "", !str_detect(junction, "N"),
+         !is.na(v_region_sequence), !str_detect(v_region_sequence, "N"),
+         #c_call_subfam %in% c("IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHM"),
+         consensus_count >= CLONE_DEFINITION_MIN_CONSENSUS_COUNT) %>%
+  # filter(str_detect(toupper(fwr1), "^[ACGT]"),
+  # if_all(c(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4),
+  #        ~ str_detect(toupper(.x), "[ACGT]"))) %>%
+  arrange(v_call, j_call, junction_length, junction, group)
+
+# lookup which groups are found in noAF dataset
+noaf_lookup <- noaf_raw %>%
+  filter(locus == "IGH") %>%
+  transmute(group = as.character(group),
+            noaf_present = TRUE,
+            noaf_productive = as.logical(productive)) %>%
+  filter(!is.na(group), group != "") %>%
+  distinct(group, .keep_all = TRUE)
+
+#assign clones // only keep sequences in clone that are AF-eligble and put reads into //
+af_distances <- shazam::distToNearest(af_igh, model = "ham", normalize = "len", vCallColumn = "v_call", locusValues = "IGH", nproc = NPROC)
+af_clones <- scoper::hierarchicalClones(af_distances, method = "nt", first = FALSE, threshold = CLONE_THRESHOLD, verbose = FALSE, nproc = NPROC) %>%
+  mutate(clone_id_af = as.character(clone_id), af_applied = !is.na(n_orig) & n_orig >= AF_APPLIED_MIN_N_ORIG) %>%
+  left_join(noaf_lookup, by = "group") %>%
+  mutate(noaf_status = case_when(
+         !af_applied ~ "AF not applied",
+         is.na(noaf_present) ~ "Not recovered in no-AF AIRR output",
+         noaf_productive %in% TRUE ~ "Productive without AF",
+         noaf_productive %in% FALSE ~ "Nonproductive without AF",
+         TRUE ~ "Productivity unavailable without AF"))
+```
+
+read tissue image and spatial coordinates
+```{r}
+#read in HE image
+tissue_image <- tiff::readTIFF(ORIGINAL_TISSUE_IMAGE_PATH)
+image_height <- dim(tissue_image)[1]
+image_width <- dim(tissue_image)[2]
+
+tissue_positions <- readr::read_csv(TISSUE_POSITIONS_PATH, show_col_types = FALSE) %>%
+  mutate(spbc = str_remove(as.character(barcode), "-1$"),
+         image_x = pxl_col_in_fullres,
+         image_y = pxl_row_in_fullres)
+
+tissue_background <- annotation_raster(tissue_image, xmin = 0, xmax = image_width, ymin = image_height, ymax = 0)
+
+# fixed positions for scale bars
+# Convert registered-image pixels to physical distance using adjacent
+# standard Visium spot centers, which are 100 micrometers apart.
+visium_neighbor_distances <- tissue_positions %>%
+  arrange(array_row, array_col) %>%
+  group_by(array_row) %>%
+  mutate(next_array_col = lead(array_col),
+         next_image_x = lead(image_x),
+         next_image_y = lead(image_y),
+         neighbor_distance_px = sqrt((next_image_x - image_x)^2 + (next_image_y - image_y)^2)) %>%
+  ungroup() %>%
+  filter(next_array_col - array_col == 2)
+
+pixels_per_um <- median(visium_neighbor_distances$neighbor_distance_px, na.rm = TRUE) / VISIUM_NEIGHBOR_DISTANCE_UM # VISIUM_NEIGHBOUR_DISTANCE_UM = 100
+spot_diameter <- VISIUM_SPOT_DIAMETER_UM * pixels_per_um
+
+```
+
+```{r}
+# scale bars
+make_scale_bar <- function(xmin, xmax, ymin, ymax, length_um) {
+  x_range <- xmax - xmin
+  y_range <- ymax - ymin
+  x_start <- xmin + 0.07 * x_range
+  x_end <- x_start + length_um * pixels_per_um
+  y_bar <- ymax - 0.10 * y_range
+  tick_height <- 0.025 * y_range
+  scale_label <- if_else(length_um == 1000, "1 mm", paste0(length_um, " µm"))
+
+  list(annotate("segment", x = x_start, xend = x_end, y = y_bar, yend = y_bar,
+       linewidth = 0.8, color = "black"),
+       annotate("segment", x = x_start, xend = x_start,
+       y = y_bar - tick_height, yend = y_bar + tick_height,
+       linewidth = 0.8, color = "black"),
+       annotate("segment", x = x_end, xend = x_end,
+       y = y_bar - tick_height, yend = y_bar + tick_height,
+       linewidth = 0.8, color = "black"),
+       annotate("text", x = (x_start + x_end) / 2, y = y_bar + 0.055 * y_range,
+       label = scale_label, size = 2.2, color = "black"))
+}
+```
+
+```{r}
+# View(af_clones %>%
+#   filter(clone_id_af == as.character(DETAIL_CLONE)) %>%
+#   select(group, fwr1, fwr4, v_germline_start, j_germline_end) %>%
+#   distinct())
+```
+
+```{r}
+# detail_clone_lineage %>%
+#   count(fwr4_length = nchar(fwr4), fwr4, sort = TRUE)
+# 
+# detail_clone_lineage %>%
+#   summarise(
+#     n_total = n(),
+#     fwr1_start_present = sum(str_detect(toupper(fwr1), "^[ACGT]"), na.rm = TRUE),
+#     fwr4_exactly_33 = sum(str_detect(toupper(fwr4), "^[ACGT]{33}$"), na.rm = TRUE),
+#     all_regions_present = sum(if_all(c(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4),
+#       ~ str_detect(toupper(.x), "[ACGT]")), na.rm = TRUE)
+#   )
+```
+
+
+
+prepare selected clone and spatial foci
+```{r}
+#prep for spatial clone distribution where spatially distinct locations are colored differently
+# and also prep for corresponding lineage
+
+detail_clone_lineage <- af_clones %>%
+  filter(clone_id_af == as.character(DETAIL_CLONE), spbc %in% tissue_positions$spbc,
+         consensus_count >= LINEAGE_MIN_CONSENSUS_COUNT,
+         n_orig >= LINEAGE_MIN_N_ORIG) %>%
+  mutate(clone_id = clone_id_af,
+         c_call_subfam = as.character(c_call_subfam),
+         spbc = as.character(spbc),
+         junction = as.character(junction),
+         junction_aa = as.character(junction_aa),
+         node_noaf_productive = as.integer(noaf_status == "Productive without AF"),
+         node_noaf_nonproductive = as.integer(noaf_status == "Nonproductive without AF"),
+         node_noaf_not_recovered = as.integer(noaf_status == "Not recovered in no-AF AIRR output"),
+         node_noaf_productivity_unavailable = as.integer(noaf_status == "Productivity unavailable without AF"),
+         node_af_not_applied = as.integer(noaf_status == "AF not applied"))
+
+
+detail_clone_lineage_full <- detail_clone_lineage %>%
+  filter(str_detect(toupper(fwr1), "^[ACGT]"),
+  if_all(c(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4),
+         ~ str_detect(toupper(.x), "[ACGT]")))
+
+detail_clone_lineage <- detail_clone_lineage_full
+
+focus_map <- detail_clone_lineage %>%
+  distinct(spbc) %>%
+  inner_join(tissue_positions %>% filter(in_tissue == 1) %>% 
+  select(spbc, image_x, image_y), by = "spbc") %>%
+  assign_spatial_foci(link_distance_px = FOCUS_LINK_DISTANCE_UM * pixels_per_um)
+
+detail_clone_lineage <- detail_clone_lineage %>%
+  left_join(focus_map %>% select(spbc, focus_id), by = "spbc")
+
+focus_ids <- focus_map %>%
+             filter(!is_isolated) %>%
+             distinct(focus_id) %>%
+             pull(focus_id) %>%
+             sort()
+
+focus_palette <- c(setNames(rep(FOCUS_COLORS, length.out = length(focus_ids)), focus_ids),"Isolated" = ISOLATED_COLOR)
+
+#integrate focus map with palette for distinct colors and shapes
+detail_spatial_df <- focus_map %>%
+  mutate(focus_id = factor(focus_id, levels = names(focus_palette)),
+         spatial_shape = if_else(is_isolated, "Isolated", "Niche"))
+
+#which group / focus / spots are used for the zoom in
+zoom_spots <- detail_spatial_df %>%
+  filter(focus_id == ZOOM_FOCUS) %>%
+  arrange(image_y, image_x) %>%
+  mutate(spot_number = row_number(),
+         spot_marker = if_else(spot_number %in% HIGHLIGHT_SPOT_NUMBERS,
+                       paste("Spot", spot_number),"Other niche spots"))
+
+marker_levels <- c("Other niche spots", paste("Spot", HIGHLIGHT_SPOT_NUMBERS))
+
+#zoom spots
+zoom_spots <- zoom_spots %>%
+  mutate(spot_marker = factor(spot_marker, levels = marker_levels))
+
+#integrate zoom spots with distinct shapes
+spot_shape_palette <- setNames(c(21, HIGHLIGHT_SPOT_SHAPES), marker_levels)
+```
+
+construct noAF-AF lineage
+```{r}
+# Track highlighted-spot membership as counts; these do not split collapsed sequences.
+highlight_count_fields <- paste0("selected_spot_count_", HIGHLIGHT_SPOT_NUMBERS)
+highlight_marker_lookup <- tibble(marker_field = highlight_count_fields,
+                                  spot_marker = paste("Spot", HIGHLIGHT_SPOT_NUMBERS),
+                                  marker_order = seq_along(HIGHLIGHT_SPOT_NUMBERS))
+
+for (i in seq_along(HIGHLIGHT_SPOT_NUMBERS)) {
+  selected_barcodes <- zoom_spots$spbc[zoom_spots$spot_number == HIGHLIGHT_SPOT_NUMBERS[i]]
+  detail_clone_lineage[[highlight_count_fields[i]]] <- as.integer(detail_clone_lineage$spbc %in% selected_barcodes)
+}
+
+references <- dowser::readIMGT(dir = IMGT_GERMLINE_DIR)
+detail_tree_input <- dowser::createGermlines(detail_clone_lineage, references, nproc = NPROC)
+# keep isotype and focus id unique (collapse all other attributes based on identical sequence)
+detail_formatted <- dowser::formatClones(detail_tree_input,
+  traits = c("c_call_subfam", "focus_id"),
+  num_fields = c("node_noaf_productive", "node_noaf_nonproductive",
+                 "node_noaf_not_recovered", "node_noaf_productivity_unavailable", "node_af_not_applied",
+                 highlight_count_fields),
+  minseq = 2, nproc = NPROC, collapse = TRUE, filterstop = FALSE)
+
+#build lineage tree
+detail_trees <- dowser::getTrees(detail_formatted, nproc = NPROC) %>%
+                dowser::scaleBranches(edge_type = "mutations")
+
+phylo_tree <- detail_trees$trees[[1]]
+
+#metadata for colours and labels // here subcategories available, will be further collapsed
+# links each AF seq to noAF categories
+node_metadata <- methods::slot(detail_trees$data[[1]], "data") %>%
+  transmute(
+    label = as.character(sequence_id),
+    focus_id = as.character(focus_id),
+    collapse_count = as.numeric(collapse_count),
+    across(all_of(highlight_count_fields), ~replace_na(as.numeric(.x), 0)),
+    node_noaf_productive = as.numeric(node_noaf_productive),
+    node_noaf_nonproductive = as.numeric(node_noaf_nonproductive),
+    node_noaf_not_recovered = as.numeric(node_noaf_not_recovered),
+    node_noaf_productivity_unavailable = as.numeric(node_noaf_productivity_unavailable),
+    node_af_not_applied = as.numeric(node_af_not_applied)
+  ) %>%
+  mutate(across(c(collapse_count, starts_with("node_")), ~replace_na(.x, 0)),
+         node_af_evaluable_count = node_noaf_productive + node_noaf_nonproductive + node_noaf_not_recovered, 
+         node_af_dependent_count = node_noaf_nonproductive + node_noaf_not_recovered) 
+
+#numbers for lineage subtitle
+tree_summary <- node_metadata %>%
+  summarise(n_af_evaluable = sum(node_af_evaluable_count), # number of all groups eligble to be processed by AF
+            n_af_dependent = sum(node_af_dependent_count)) %>%  # number of AF groups that are nonprod or not observed in noAF
+  mutate(pct_af_dependent = 100 * n_af_dependent / n_af_evaluable)
+```
+
+```{r}
+#detail_formatted$data
+```
+
+
+--------
+----6 C
+--------
+
+full-tissue spatial figure
+```{r}
+tissue_x_limits <- c(image_width * TISSUE_CROP_LEFT, image_width * TISSUE_CROP_RIGHT)
+tissue_y_limits <- c(image_height * TISSUE_CROP_BOTTOM, image_height * TISSUE_CROP_TOP)
+
+zoom_padding <- ZOOM_PADDING_SPOTS * spot_diameter
+zoom_x_limits <- c(max(0, min(zoom_spots$image_x) - zoom_padding),
+                   min(image_width, max(zoom_spots$image_x) + ZOOM_RIGHT_PADDING_SPOTS * spot_diameter))
+zoom_y_limits <- c(min(image_height, max(zoom_spots$image_y) + zoom_padding),
+                   max(0, min(zoom_spots$image_y) - zoom_padding))
+
+p_detail_spatial <- ggplot() + tissue_background +
+  annotate("rect", xmin = zoom_x_limits[1], xmax = zoom_x_limits[2],
+           ymin = zoom_y_limits[2], ymax = zoom_y_limits[1], fill = NA, color = "black", linewidth = 0.6) +
+  geom_point(data = detail_spatial_df, aes(x = image_x, y = image_y, fill = focus_id, shape = spatial_shape),
+             size = SPATIAL_POINT_SIZE, stroke = 0.25, color="black") +
+  make_scale_bar(tissue_x_limits[1], tissue_x_limits[2],
+                 tissue_y_limits[2], tissue_y_limits[1], TISSUE_SCALE_BAR_UM) +
+  scale_color_manual(values = focus_palette, name = "Spatial niches", drop = TRUE) +
+  scale_shape_manual(values = c("Niche" = 21, "Isolated" = 4), guide = "none") +
+  scale_y_reverse(limits = c(image_height, 0), expand = expansion(0)) +
+  coord_fixed(xlim = tissue_x_limits, ylim = tissue_y_limits, expand = FALSE) +
+  scale_fill_manual(values = focus_palette, name = "Spatial niches", drop = TRUE) +
+  scale_shape_manual(values = c("Niche" = 21, "Isolated" = 4), guide = "none") +
+  guides(fill = guide_legend(nrow = 1, byrow = TRUE,
+                             override.aes = list(shape = c(rep(21, length(focus_ids)), 4), color = "black", size = 2.4, stroke = 0.4))) +
+  theme_void(base_size = 7) +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.box = "horizontal",
+        legend.key.width = grid::unit(0.3, "cm"),
+        legend.spacing.x = grid::unit(1, "pt"),
+        legend.margin = margin(0, 0, 0, 0),
+        legend.box.margin = margin(0, 0, 0, 0),
+        legend.title = element_text(size = 6.5, color = "black"),
+        legend.text = element_text(size = 6, color = "black"),
+        plot.margin = margin(2, 2, 2, 2))
+
+p_detail_spatial
+```
+
+```{r}
+#remove blakc border around
+p_detail_spatial <- p_detail_spatial +
+  theme(panel.border = element_blank(),
+        plot.background = element_blank())
+p_detail_spatial
+
+```
+
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+saveRDS(p_detail_spatial, file.path(save_dir, "p6_c.rds"))
+```
+
+---------------
+6 D - lineage tree
+--------------
+
+lineage figure
+```{r}
+detail_tree <- ggtree::ggtree(phylo_tree)
+
+detail_tree_data <- detail_tree$data %>%
+  mutate(label = as.character(label)) %>%
+  left_join(node_metadata, by = "label") %>%
+  mutate(is_germline = label == "Germline",
+         is_observed = label %in% node_metadata$label,
+         collapse_count = if_else(is_germline, 1, replace_na(collapse_count, 1)),
+         node_af_impact = case_when(is_germline ~ "Germline",
+                                    is_observed & node_af_dependent_count > 0 ~ "AF-recovered groups",
+                                    is_observed & node_af_evaluable_count > 0 ~ "AF-independent groups",
+                                    is_observed ~ "N_ORIG < 5",
+                                    TRUE ~ NA_character_),
+         node_count_label = case_when(
+         !is_observed | collapse_count <= 1 ~ NA_character_,
+         node_af_evaluable_count == 0 ~ as.character(collapse_count),
+         node_af_evaluable_count == collapse_count & node_af_dependent_count > 0 ~ paste0(node_af_dependent_count, "/", collapse_count),
+         node_af_evaluable_count == collapse_count ~ as.character(collapse_count),
+         TRUE ~ paste0(node_af_dependent_count, "/", node_af_evaluable_count, "/", collapse_count)))
+
+detail_tree$data <- detail_tree_data
+
+# group labels
+lineage_focus <- detail_tree_data %>%
+  filter(is_observed) %>%
+  mutate(focus_color = unname(focus_palette[as.character(focus_id)]),
+         focus_x = x + TREE_FOCUS_OFFSET * 0.7,
+         focus_label = recode(as.character(focus_id), "1" = "Niche 1", "2" = "Niche 2", "3" = "Niche 3", "4" = "Niche 4")) %>%
+  filter(!is.na(focus_color))
+
+lineage_labels <- detail_tree_data %>%
+  filter(!is.na(node_count_label)) %>%
+  mutate(label_x = x + AF_LABEL_OFFSET)
+
+af_node_palette <- c("AF-recovered groups" = "#D95F02", "AF-independent groups" = "gray35", "N_ORIG < 5" = "#BDBDBD", "Germline" = "black")
+
+# A collapsed node can contain sequences from several highlighted spots.
+# Show each represented spot once, using the same shapes as the zoom and UCell panel.
+lineage_spot_symbols <- lineage_focus %>%
+  select(label, y, focus_x, all_of(highlight_count_fields)) %>%
+  pivot_longer(cols = all_of(highlight_count_fields), names_to = "marker_field", values_to = "spot_group_count") %>%
+  filter(spot_group_count > 0) %>%
+  left_join(highlight_marker_lookup, by = "marker_field") %>%
+  group_by(label) %>%
+  arrange(marker_order, .by_group = TRUE) %>%
+  mutate(marker_x = focus_x + TREE_SPOT_OFFSET + (row_number() - 1) * TREE_SPOT_SPACING) %>%
+  ungroup()
+
+lineage_xmax <- max(detail_tree_data$x, lineage_focus$focus_x, lineage_labels$label_x,
+                    lineage_spot_symbols$marker_x, na.rm = TRUE)
+
+grid_data <- tibble(x = seq(TREE_GRID_STEP, floor(max(detail_tree_data$x, na.rm = TRUE) / TREE_GRID_STEP) * TREE_GRID_STEP, by = TREE_GRID_STEP), y = 0) %>%
+  mutate(label = as.character(x))
+
+```
+
+
+```{r}
+p_detail_lineage <- detail_tree +
+  geom_vline(data = grid_data, aes(xintercept = x), inherit.aes = FALSE, linetype = "dashed", linewidth = 0.3, color = "grey70") +
+  geom_text(data = grid_data, aes(x = x, y = y, label = label), inherit.aes = FALSE, size = 1.5, vjust = 1.25, color = "grey35") +
+  geom_point(data = detail_tree_data %>% filter(is_observed | is_germline),
+             aes(x = x, y = y, color = node_af_impact, size = collapse_count), inherit.aes = FALSE, shape = 16) +
+  geom_text(data = lineage_labels, aes(x = label_x, y = y, label = node_count_label, color = node_af_impact),
+  inherit.aes = FALSE, hjust = 0, size = 1.5, fontface = "bold", show.legend = FALSE) +
+  geom_label(data = lineage_focus, aes(x = focus_x, y = y, label = focus_label, fill = focus_color),
+             inherit.aes = FALSE, hjust = 0, size = 1.5,color = ifelse(lineage_focus$focus_label %in% c("Niche 2", "Niche 3"),"black", "white"),
+             fontface = "bold", label.padding = grid::unit(0.15, "lines"), label.r = grid::unit(0, "lines"), linewidth = 0.2, show.legend = FALSE) +
+  geom_point(data = lineage_spot_symbols, aes(x = marker_x, y = y, shape = spot_marker),
+             inherit.aes = FALSE, size = TREE_SPOT_SIZE, stroke = 0.4,
+             color = "black", fill = "white", show.legend = FALSE) +
+  scale_shape_manual(values = spot_shape_palette, guide = "none") +
+  scale_color_manual(values = af_node_palette, breaks = names(af_node_palette), 
+                     labels = c("AF-recovered", "AF-independent", "N_ORIG < 5", "Germline"), drop = TRUE) +
+  scale_size_continuous(range = c(1.8, 4.2), guide = "none") +
+  scale_fill_identity() +
+  guides(color = guide_legend(nrow = 1, byrow = TRUE, title="Adaptive filter\n   specificity")) +
+  coord_cartesian(xlim = c(0, lineage_xmax + 8), clip = "off") +
+  ggtree::theme_tree(base_size=7) +
+  labs(subtitle = paste0(tree_summary$n_af_dependent, "/", tree_summary$n_af_evaluable,
+                  " groups (N_ORIG > 4) are recovered by adaptive filtering (",
+                  scales::number(tree_summary$pct_af_dependent, accuracy = 0.1), "%)")) +
+  theme(text = element_text(color = "black"),
+    plot.subtitle = element_text(size = 6.5, color = "black", margin = margin(b = 3)),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.box = "horizontal",
+    legend.margin = margin(0, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 0),
+    plot.margin = margin(r=-42, 2, 2, 2)
+  )
+
+```
+
+
+```{r, fig.width=5, fig.height=3.5}
+p_detail_lineage
+```
+
+```{r, fig.width=5, fig.height=3.5}
+p_detail_lineage
+
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+saveRDS(p_detail_lineage, file.path(save_dir, "p6_d_full.rds"))
+```
+
+---validation
+
+```{r}
+#detail_formatted$data
+```
+
+extract clone
+```{r}
+# selected_clone <- af_clones %>%
+#   filter(clone_id_af == as.character(DETAIL_CLONE),
+#          n_orig > 4,
+#          consensus_count > 1,
+#          spbc %in% tissue_positions$spbc)
+# 
+# selected_clone
+# saveRDS(selected_clone, file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/", "p6_c43_AIRR.rds"))
+
+
+#----
+# readr::write_csv(selected_clone, file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/", "p6_c43_AIRR.csv"))
+# 
+# x <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/", "p6_c43_AIRR.rds"))
+# x
+```
+
+---------------
+6 E - Large focus zoom-in
+--------------
+
+largest-focus zoom
+```{r}
+p_clone_zoom <- ggplot() +
+  tissue_background +
+  ggforce::geom_circle(data = zoom_spots,
+    aes(x0 = image_x, y0 = image_y, r = spot_diameter / 2, color = focus_id),
+    fill = NA, linewidth = 0.45,
+    show.legend = FALSE) +
+  geom_point(data = zoom_spots,
+    aes(x = image_x, y = image_y, shape = spot_marker),
+    size = ZOOM_SYMBOL_SIZE, fill = NA, color = "black", stroke = 0.55) +
+  make_scale_bar(zoom_x_limits[1], zoom_x_limits[2],
+    zoom_y_limits[2], zoom_y_limits[1], ZOOM_SCALE_BAR_UM) +
+  scale_color_manual(values = focus_palette, guide = "none") +
+  scale_shape_manual(values = spot_shape_palette, name = "Selected spots") +
+  scale_y_reverse(limits = c(image_height, 0), expand = expansion(0)) +
+  coord_fixed(xlim = zoom_x_limits, ylim = zoom_y_limits, expand = FALSE) +
+  guides(shape = guide_legend(nrow = 1, byrow = TRUE,
+    override.aes = list(size = 2.5, color = "black"))) +
+  theme_void(base_size = 7) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.4),
+    legend.position = "bottom",
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    plot.margin = margin(2, 2, 2, 2)
+  )
+
+p_clone_zoom
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+saveRDS(p_clone_zoom, file.path(save_dir, "p6_e.rds"))
+```
+
+---------------
+6 F - Ucell, zoom-in
+--------------
+
+cell-signature enrichment in the largest focus
+```{r}
+#read-in ucell scores
+ucell_long <- readRDS(UCELL_RDS_PATH) %>%
+  as.data.frame() %>%
+  as_tibble() %>%
+  mutate(spbc = str_remove(as.character(spbc_clean), "-1$")) %>%
+  inner_join(tissue_positions %>% filter(in_tissue == 1) %>% select(spbc), by = "spbc") %>%
+  select(spbc, all_of(unname(UCELL_SIGNATURES))) %>%
+  pivot_longer(cols = -spbc, names_to = "signature_column", values_to = "ucell_score") %>%
+  group_by(signature_column) %>%
+  mutate(ucell_z = as.numeric(scale(ucell_score))) %>% #re-scale ucell scores for this example
+  ungroup() %>%
+  mutate(signature = names(UCELL_SIGNATURES)[match(signature_column, unname(UCELL_SIGNATURES))],
+         signature = factor(signature, levels = rev(names(UCELL_SIGNATURES))))
+
+clone_ucell <- ucell_long %>%
+  inner_join(zoom_spots %>% select(spbc, spot_number, spot_marker, focus_id), by = "spbc")
+
+clone_ucell_summary <- clone_ucell %>%
+  group_by(signature) %>%
+  summarise(mean_ucell_z = mean(ucell_z, na.rm = TRUE), .groups = "drop")
+
+```
+
+```{r}
+p_clone_ucell <- ggplot(clone_ucell_summary, aes(x = mean_ucell_z, y = signature)) +
+  #geom_vline(xintercept = 0, color = "black", linewidth = 0.4) +
+  geom_col(fill = "grey80", color = "gray35", linewidth = 0.25, width = 0.6) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.4) +
+  #geom_vline(xintercept = 0, color = "black", linewidth = 0.4) +
+  #geom_col(fill = "grey80", color = "black", linewidth = 0.3, width = 0.68) +
+  geom_point(data = clone_ucell,
+    aes(x = ucell_z, y = signature, color = focus_id, shape = spot_marker),
+    inherit.aes = FALSE, size = 1.5, fill = NA, stroke = 0.5,
+    position = position_jitter(width = 0, height = 0.10, seed = 1)) +
+  scale_color_manual(values = focus_palette, guide = "none") +
+  scale_shape_manual(values = spot_shape_palette, name = "Selected spots") +
+  guides(shape = guide_legend(nrow = 1, byrow = TRUE,
+    override.aes = list(size = 2, color = "black"))) +
+  labs(x = "Normalized expression-signature score\n(UCell z-score)",
+    y = NULL) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(t = -4),
+    strip.text = element_text(size = 6.5, color = "black"),
+    #strip.background = element_rect(fill = "gray92", color = "grey35", linewidth = 0.2),
+    #plot.margin = margin(0, 0, 0, 0),
+    #panel.background = element_rect(fill = "white", color = NA),
+    #plot.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom",
+    plot.margin = margin(2, l=4, 2, 2))
+
+p_clone_ucell
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+saveRDS(p_clone_ucell, file.path(save_dir, "p6_f.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,165 @@
+---
+title: "LongAIRR adaptive filtering specificity"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains AF-specificity for revision-only
+# Reads are compared between AF and noAF datasets and sorted
+# into underlying categories depending on where they are observerd
+#
+# Figure shown in point-by-point response
+#
+########################################
+
+```{r}
+library(tidyverse)
+```
+
+```{r,message=FALSE}
+
+BASE_DIR <- path.expand("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision")
+MIN_N_ORIG <- 5L
+
+sample_manifest <- tribble(~sample, ~af_dir, ~noaf_dir,
+  "S1_ONT_Q17", "af5_samples/sp12_ont_sd17_af5", "no_af_samples/sp12_ont_noaf",
+  "S1_PB_Q17", "af5_samples/sp12_pb", "no_af_samples/sp12_pb_noaf",
+  "S2_ONT_Q17", "af5_samples/sp7_sd17_af5", "no_af_samples/sp7_noaf",
+  "S3_ONT_Q17", "af5_samples/sp8_sd17_af5", "no_af_samples/sp8_noaf",
+  "S4_ONT_Q17_HD", "af5_hd/sp21_hd_sd17_af5/post_whitelist_run", "no_af_samples/sp21hd_noaf")
+sample_order <- sample_manifest$sample
+```
+
+Read-in and classify molecular groups
+
+Use the *complete* IG and TR annotation tables to distinguish nonproductive groups
+from groups absent from the noAF AIRR output. 
+
+Retention requires productivity, `n_orig >= 5` and the original downstream AIRR quality filters
+
+```{r}
+parse_productive <- function(x) {
+  x <- str_to_lower(str_trim(as.character(x)))
+  case_when(x %in% c("true", "t", "1", "yes") ~ TRUE,
+            x %in% c("false", "f", "0", "no") ~ FALSE, TRUE ~ NA)
+}
+
+read_group_states <- function(run_dir) {
+  paths <- file.path(BASE_DIR, run_dir, "airr/tmp", c("ig/ig_db-pass.tsv", "tr/tr_db-pass.tsv"))
+  map_dfr(paths, ~ read_tsv(.x, col_types = cols(.default = col_character()), progress = FALSE)) %>%
+    filter(!is.na(group), group != "", !is.na(locus), locus != "") %>%
+    mutate(productive_flag = parse_productive(productive), n_orig = as.integer(n_orig),
+           v_region_sequence = str_sub(toupper(sequence), as.integer(v_sequence_start), as.integer(v_sequence_end)),
+           passes_locus_qc = !is.na(c_call) & str_sub(c_call, 1, 3) == locus,
+           passes_umi_qc = !is.na(umi) & !str_detect(umi, "TTTTTTTTTTT"),
+           passes_junction_qc = !is.na(junction) & junction != "" & !str_detect(toupper(junction), "N"),
+           passes_v_qc = !is.na(v_region_sequence) & v_region_sequence != "" & !str_detect(v_region_sequence, "N"),
+           eligible_n_orig = !is.na(n_orig) & n_orig >= MIN_N_ORIG,
+           retained = productive_flag %in% TRUE & eligible_n_orig &
+             passes_locus_qc & passes_umi_qc & passes_junction_qc & passes_v_qc) %>%
+    group_by(group) %>%
+    summarise(present_in_airr = TRUE,
+              productive_any = any(productive_flag %in% TRUE),
+              nonproductive_any = any(productive_flag %in% FALSE),
+              productive_eligible_any = any(productive_flag %in% TRUE & eligible_n_orig),
+              retained = any(retained), .groups = "drop") %>%
+    mutate(group_status = case_when(
+      retained ~ "Retained productive",
+      !productive_any & nonproductive_any ~ "Nonproductive",
+      !productive_eligible_any ~ "Productive, but N_ORIG <= 4",
+      productive_eligible_any & !retained ~ "Productive, but excluded by AIRR QC",
+      TRUE ~ "Other AIRR outcome")) %>%
+    select(group, present_in_airr, retained, group_status)
+}
+
+compare_sample <- function(sample, af_dir, noaf_dir) {
+  af <- read_group_states(af_dir) %>% select(group, af_retained = retained)
+  noaf <- read_group_states(noaf_dir) %>%
+    rename(noaf_present = present_in_airr, noaf_retained = retained, noaf_group_status = group_status)
+
+  full_join(af, noaf, by = "group") %>%
+    mutate(sample = .env$sample, af_retained = replace_na(af_retained, FALSE),
+           noaf_retained = replace_na(noaf_retained, FALSE), noaf_present = replace_na(noaf_present, FALSE)) %>%
+    relocate(sample, group)
+}
+
+group_comparison <- pmap_dfr(sample_manifest, compare_sample)
+```
+
+
+--Gain categories
+
+Percentages use the number of retained noAF groups as the denominator.
+The plotted gain is the recovery of groups retained only with AF
+
+```{r}
+sample_summary <- group_comparison %>% group_by(sample) %>%
+  summarise(noaf_productive = sum(noaf_retained), af_productive = sum(af_retained), .groups = "drop") %>%
+  mutate(sample_axis_label = paste0(sample, "\nnoAF ", scales::comma(noaf_productive),
+                                   " → AF ", scales::comma(af_productive)))
+sample_axis_labels <- setNames(sample_summary$sample_axis_label, sample_summary$sample)
+
+category_levels <- c("Nonproductive in noAF", "Productive in noAF, excluded from Fig. 4c",
+                     "No corresponding noAF AIRR record", "Other noAF outcome")
+
+gain_plot_data <- group_comparison %>% filter(af_retained, !noaf_retained) %>%
+  mutate(plot_category = case_when(
+    !noaf_present ~ "No corresponding noAF AIRR record",
+    noaf_group_status == "Nonproductive" ~ "Nonproductive in noAF",
+    noaf_group_status %in% c("Productive, but N_ORIG <= 4", "Productive, but excluded by AIRR QC") ~
+      "Productive in noAF, excluded from Fig. 4c",
+    TRUE ~ "Other noAF outcome")) %>%
+  count(sample, plot_category, name = "n_groups") %>%
+  left_join(sample_summary %>% select(sample, noaf_productive), by = "sample") %>%
+  mutate(percent = 100 * n_groups / noaf_productive,
+         percent_label = if_else(percent >= 2.5, scales::number(percent, accuracy = 0.1, suffix = "%"), ""),
+         plot_category = factor(plot_category, levels = category_levels),
+         sample = factor(sample, levels = rev(sample_order)))
+
+turnover_colors <- c("Nonproductive in noAF" = "#8BD17C",
+                     "Productive in noAF, excluded from Fig. 4c" = "#36A567",
+                     "No corresponding noAF AIRR record" = "#087F5B", "Other noAF outcome" = "#66C2A4")
+
+# Preserve the original legend: "Ambiguous" includes QC and group-size exclusions.
+legend_labels <- c("Nonproductive in noAF" = "Non-prod. in noAF",
+                   "Productive in noAF, excluded from Fig. 4c" = "Ambiguous in noAF",
+                   "No corresponding noAF AIRR record" = "Not in noAF output")
+legend_breaks <- names(legend_labels)[names(legend_labels) %in% as.character(gain_plot_data$plot_category)]
+```
+
+
+plot figure
+```{r, fig.width=8.2, fig.height=3.6}
+p_af_noaf_categories <- ggplot(gain_plot_data, aes(x = percent, y = sample, fill = plot_category)) +
+  geom_col(width = 0.78, color = "white", linewidth = 0.35) +
+  geom_text(aes(label = percent_label), position = position_stack(vjust = 0.5), size = 2.5, color = "white") +
+  scale_fill_manual(values = turnover_colors, breaks = legend_breaks, labels = legend_labels[legend_breaks], drop = TRUE) +
+  scale_x_continuous(breaks = scales::breaks_width(5), labels = scales::label_number(accuracy = 1, suffix = "%"),
+                     expand = expansion(mult = c(0, 0.04))) +
+  scale_y_discrete(labels = sample_axis_labels, expand = expansion(add = c(0.12, 0.12))) +
+  labs(x = "AF-specific gain relative to noAF (%)", y = NULL, fill = NULL) +
+  guides(fill = guide_legend(nrow = 1, byrow = TRUE)) +
+  theme_bw(base_size = 7) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
+        panel.grid.major.x = element_line(linewidth = 0.25, color = "grey85"),
+        panel.border = element_rect(linewidth = 0.3),
+        axis.text = element_text(size = 6, color = "black"), axis.text.y = element_text(lineheight = 0.9),
+        legend.position = "bottom", legend.text = element_text(size = 6),
+        legend.key.width = grid::unit(0.3, "cm"), plot.margin = margin(5, 5, 5, 5))
+
+p_af_noaf_categories
+```
+
+```{r}
+saveRDS(p_af_noaf_categories, file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/af_categories_simple.rds"))
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

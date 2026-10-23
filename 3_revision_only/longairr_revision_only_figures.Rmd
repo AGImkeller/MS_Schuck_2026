@@ -1,0 +1,173 @@
+---
+title: "Longairr pbpr figures"
+author: "Jonas Schuck"
+date: "2026-09-09"
+output: html_document
+---
+
+########################################
+#
+# Figures for Point-by-point response
+#
+########################################
+
+
+```{r}
+library(ggplot2)
+library(cowplot)
+```
+
+#Reviewer #1
+
+## comment 1
+
+```{r}
+c1_1a <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_a.rds"))
+c1_1b <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/nkeep_ncons.rds"))
+```
+
+```{r, fig.width=8, fig.height=3}
+
+c1_1_combined <- plot_grid(c1_1a, c1_1b, ncol=2, nrow=1, labels = c("1.1a", "1.1b"), label_size=7, hjust = 0.8, vjust = 1.0, rel_widths = c(1,0.9))
+c1_1_combined <- c1_1_combined + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=15, 5, 5, 5))) 
+c1_1_combined
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_1.pdf", plot=c1_1_combined,width = 8, height = 3)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_1.png", plot=c1_1_combined,width = 8, height = 3)
+```
+
+
+
+-----
+comment 2
+
+```{r}
+c2_1a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_b.rds")
+c2_1b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_c.rds")
+```
+
+```{r, fig.width=6, fig.height=5}
+c1_2_af <- plot_grid(c2_1a, c2_1b, labels = c("1.2a", "1.2b"),
+  label_size = 7, nrow = 2, ncol=1, hjust = 0, vjust = 1.0, rel_heights = c(1,0.9))
+c1_2_af
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_2.pdf", plot=c1_2_af, width = 6, height = 5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_2.png", plot=c1_2_af, width = 6, height = 5)
+```
+
+
+
+
+comment 3
+
+```{r}
+c3_1a <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/msa_runtime.rds"))
+```
+
+```{r, fig.width=4, fig.height=2.5}
+c1_3_runtime <- plot_grid(c3_1a, labels = c("1.3a"),
+  label_size = 7, hjust = 0, vjust = 1.0)
+c1_3_runtime
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_3.pdf", plot=c1_3_runtime, width = 4, height = 2.5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_3.png", plot=c1_3_runtime, width = 4, height = 2.5)
+```
+
+
+
+comment 4
+
+```{r}
+c4_1a <- readRDS( file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/af_categories_simple.rds"))
+# c4_1b <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_f.rds"))
+```
+
+
+```{r, fig.width=8, fig.height=5}
+c1_4_af_2_left <- plot_grid(c4_1a, NULL,
+  label_size = 7, nrow=2,hjust = 0, vjust = 1.0, rel_heights = c(0.9, 0.4))
+#c1_4_af_2_left
+
+
+# c1_4_af_2 <- plot_grid(c1_4_af_2_left, c4_1b, labels = c("1.4a", "1.4b"),
+#   label_size = 7, ncol=2, hjust = 0, vjust = 1.0)
+# c1_4_af_2
+```
+
+```{r, fig.width=4, fig.height=2.5}
+c4_1a_grid <- plot_grid(c4_1a, labels = c("1.4a"),
+  label_size = 7, hjust = 0, vjust = 1.0)
+c4_1a_grid
+```
+
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_4_af.pdf", plot=c4_1a_grid, width = 4, height = 2.5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev1_4_af.png", plot=c4_1a_grid, width = 4, height = 2.5)
+```
+
+
+rev 3
+
+```{r}
+c3_4a <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/ont_pb_overlap_matching.rds"))
+c3_4b <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/spAIRR_bulk_overlap_matching.rds"))
+```
+
+```{r, fig.width=8, fig.height=3}
+
+c3_4_grid <- plot_grid(c3_4a, c3_4b, labels = c("3.4a", "3.4b"),
+  label_size = 7, nrow = 1, hjust = 0, vjust = 1.0)
+c3_4_grid
+```
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev3_4_overlap.pdf", plot=c3_4_grid, width = 8, height = 3)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev3_4_overlap.png", plot=c3_4_grid, width = 8, height = 3)
+```
+
+
+--layout 2
+```{r}
+c3_4a <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_f.rds"))
+c3_4b <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/ont_pb_overlap_matching.rds"))
+c3_4c <- readRDS(file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/spAIRR_bulk_overlap_matching.rds"))
+```
+
+```{r}
+c3_4_right <- plot_grid(c3_4b, c3_4c, labels = c("3.4b", "3.4c"),
+                        label_size = 7, nrow = 2, hjust = 0, vjust = 1.0)
+
+c3_4_right
+```
+
+```{r, fig.width=8, fig.height=5}
+c3_4_full <- plot_grid(c3_4a, c3_4_right, labels = c("3.4a", ""),
+                        label_size = 7, nrow = 1, hjust = 0, vjust = 1.0)
+c3_4_full
+```
+
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev3_4_full_new.pdf", plot=c3_4_full, width = 8, height = 5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/rev3_4_full_new.png", plot=c3_4_full, width = 8, height = 5)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+

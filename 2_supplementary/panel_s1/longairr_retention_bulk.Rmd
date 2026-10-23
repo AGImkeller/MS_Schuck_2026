@@ -1,0 +1,352 @@
+---
+title: "supp1_b"
+author: "Jonas Schuck"
+date: "2026-02-19"
+output: html_document
+---
+
+########################################
+#
+# Script contains analysis to compute retention of reads throughout the different
+# LongAIRR processing steps determined by the summary.tsv generated during
+# LongAIRR processing for each dataset.
+#
+# We compare additional Bulk samples supporting Fig. 2e and comparing to a different
+# experimental protocol (S5_ONT_Q17_UDI06, S6_ONT_Q17_UDI20, S7_ONT_Q17_UDI12, S8_ONT_Q17_UDI13)
+#
+# Results are shown in LongAIRR Fig. S1
+#
+########################################
+
+
+```{r libraries, include=TRUE, message=FALSE}
+
+library(dplyr)
+library(stringr)
+library(readr)
+library(tibble)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(cowplot)
+library(ggtext)
+library(grid)
+```
+
+--------------------S1_B-------------------
+-----LongAIRR read retention (Bulk)
+------------------------------------------
+
+```{r}
+theme_panel2_main <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text  = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    plot.margin  = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA))
+
+theme_panel2_table <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid   = element_blank(),
+    axis.ticks   = element_blank(),
+    axis.text.x  = element_text(size = 6, color = "black"),
+    axis.text.y  = ggtext::element_markdown(size = 6, hjust = 1),
+    panel.border = element_rect(color = NA, fill = NA),
+    plot.margin  = margin(t = 0, r = 0, b = 0, l = 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA))
+```
+
+```{r}
+samples <- tribble(
+  ~sample,            ~summary_tsv,                                                                 ~udi,    ~col,
+  "S5_ONT_Q17_UDI06",  file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/b10_sd17_af5_005/summary.tsv"), "UID6",  "#1F77B4",
+  "S6_ONT_Q17_UDI20",  file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/b10_sd17_af5_005/summary.tsv"), "UID20", "#2CA02C",
+  "S7_ONT_Q17_UDI12",  file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/b11_sd17_af5_005/summary.tsv"), "UID12", "#D62728",
+  "S8_ONT_Q17_UDI13",  file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/b11_sd17_af5_005/summary.tsv"), "UID13", "#9467BD"
+)
+
+steps_levels <- c("Total_in","Filter_out","Demux_out","Group_sets","Seqtag_out","AIRR_out","AIRR_prod")
+
+sample_list <- samples$sample
+sample_cols <- setNames(samples$col, samples$sample)
+
+# run colors (no legend)
+run_files <- unique(samples$summary_tsv)
+run_cols  <- c("black", "gray50")
+names(run_cols) <- run_files
+```
+
+```{r}
+read_bulk_run <- function(file) {
+    read_delim(file, delim = "\t", skip = 2, col_types = cols(.default = col_character()), trim_ws = TRUE) %>%
+    transmute(
+      Step_raw     = str_remove(str_squish(Step), "^>"),
+      PathInfo     = str_squish(PathInfo),
+      InputReads   = suppressWarnings(as.numeric(InputReads)),
+      OutputReads  = suppressWarnings(as.numeric(OutputReads)),
+      OutputDescription = str_squish(OutputDescription),
+      Step = case_when(
+        Step_raw == "InputRate" ~ "Total_in",
+        Step_raw == "Filtering" ~ "Filter_out",
+        Step_raw == "Demux"     ~ "Demux_out",
+        Step_raw == "Collapse"  ~ "Group_sets",
+        Step_raw == "Seqtag"    ~ "Seqtag_out",
+        Step_raw == "AIRR"      ~ "AIRR_out",
+        Step_raw == "AIRRRate"  ~ "AIRR_prod",
+        TRUE ~ Step_raw),
+      summary_tsv = file) %>%
+    filter(Step %in% steps_levels)
+}
+
+```
+
+
+helper to build one row per udi
+```{r}
+build_one_udi_row <- function(run_df, run_file, samplename, udi, steps_levels) {
+  demux <- run_df %>%
+   filter(Step == "Demux_out", PathInfo == udi) %>%
+   dplyr::slice(1)
+
+  seqtag <- run_df %>%
+    filter(Step == "Seqtag_out", PathInfo == udi) %>%
+    dplyr::slice(1)
+
+  airr_out <- run_df %>%
+    filter(Step == "AIRR_out", PathInfo == paste0(udi, " | Ig"),
+      OutputDescription == "Sequences with valid V(D)J annotation") %>%
+    dplyr::slice(1)
+
+  airr_prod <- run_df %>%
+    filter(Step == "AIRR_prod", PathInfo == paste0(udi, " | Ig")) %>%
+    dplyr::slice(1)
+
+  consensus <- run_df %>%
+    filter(Step == "Group_sets", PathInfo == paste0(udi, " | Consensus")) %>%
+    dplyr::slice(1)
+
+  bind_rows(demux, consensus, seqtag, airr_out, airr_prod) %>%
+    transmute(
+      summary_tsv = run_file,
+      sample = samplename,
+      udi = udi,
+      Step = factor(Step, levels = steps_levels),
+      OutputReads = OutputReads)
+}
+```
+
+build rows per bulk run
+```{r}
+build_rows_for_one_run <- function(run_df, run_file, sample_map) {
+  # add TOTAL_IN if missing from Filter_out InputReads
+  trunk_base <- run_df %>%
+    filter(Step == "Filter_out") %>%
+    dplyr::slice(1)
+
+  total_in_val <- run_df %>%
+    filter(Step == "Total_in") %>%
+    dplyr::slice(1) %>%
+    pull(OutputReads)
+
+  if (length(total_in_val) == 0 || is.na(total_in_val[1])) {
+    total_in_val <- trunk_base %>% pull(InputReads)
+  }
+
+  filter_out_val <- trunk_base %>% pull(OutputReads)
+
+  # shared lines
+  trunk <- tibble(
+    summary_tsv = run_file,
+    Step = c("Total_in", "Filter_out"),
+    OutputReads = c(total_in_val[1], filter_out_val[1])) %>%
+    mutate(Step = factor(Step, levels = steps_levels))
+
+  # per-udi lines
+  post <- purrr::pmap_dfr(list(sample_map$sample, sample_map$udi),
+    ~ build_one_udi_row(run_df = run_df, run_file = run_file, samplename = ..1, udi = ..2, steps_levels = steps_levels))
+
+  list(trunk = trunk, post = post)
+}
+```
+
+#------------use functions
+
+```{r}
+runs <- samples %>% distinct(summary_tsv)
+
+run_objs <- map(runs$summary_tsv, function(run_file) {
+  run_df <- read_bulk_run(run_file)
+  sample_map <- samples %>% filter(summary_tsv == run_file) %>% select(sample, udi)
+  build_rows_for_one_run(run_df, run_file, sample_map)
+})
+
+#shared
+df_trunk_all <- bind_rows(map(run_objs, "trunk")) %>%
+  mutate(run_col = unname(run_cols[summary_tsv]))
+# post-demux
+df_post_all <- bind_rows(map(run_objs, "post")) %>%
+  mutate(sample = factor(sample, levels = sample_list))
+```
+
+data wrangling to connect lines
+```{r}
+df_trunk_expanded <- samples %>%
+  select(sample, summary_tsv) %>%
+  left_join(df_trunk_all %>% select(summary_tsv, Step, OutputReads), by = "summary_tsv") %>%
+  mutate(sample = factor(sample, levels = sample_list),
+    Step   = factor(Step, levels = steps_levels))
+
+df_connected <- bind_rows(
+  df_trunk_expanded %>% mutate(layer = "connected"),
+  df_post_all %>% mutate(layer = "connected")) %>%
+  mutate(Step = factor(as.character(Step), levels = steps_levels)) %>%
+  arrange(sample, Step)
+```
+
+retention curves figure
+```{r}
+split_label_y <- max(df_connected$OutputReads, na.rm = TRUE) / 2
+split_label_y <- 1000000
+
+bulk_retention <- ggplot() +
+  geom_vline(xintercept = 3.5, linetype = "dashed", linewidth = 0.35, color = "grey65") +
+  geom_line(data = df_connected, aes(x = Step, y = OutputReads, group = sample, color = sample), linewidth = 1.15) + # sample lines (connect across trunk + post)
+  geom_point(data = df_post_all, aes(x = Step, y = OutputReads, color = sample), size = 1.2) + # sample points ONLY post-demux
+  geom_line(data = df_trunk_all,aes(x = Step, y = OutputReads, group = summary_tsv), linewidth = 1.1, color = df_trunk_all$run_col, show.legend = FALSE) + # trunk overlays FIRST (behind)
+  geom_point(data = df_trunk_all, aes(x = Step, y = OutputReads, group = summary_tsv), size = 1.2, color = df_trunk_all$run_col,show.legend = FALSE) +
+  scale_color_manual(values = sample_cols) +
+  scale_x_discrete(limits = steps_levels) +
+  scale_y_log10(labels = scales::label_number(accuracy = 1),breaks = scales::log_breaks(n = 7)) +
+  annotate("text", x = 2, y = Inf, label = "Raw reads", vjust = 1.3, size = 2.6, fontface = "bold", color = "black") +
+  annotate("text", x = 5.5, y = Inf, label = "Consensus sequences", vjust = 1.3, size = 2.6, fontface = "bold", color = "black") +
+  labs(y = "Number of Reads", x = NULL, color = "Sample") +
+  guides(linetype = "none", color = guide_legend(byrow = TRUE)) +
+  theme_panel2_main +
+  theme_bw() +
+  theme(
+    axis.text.x  = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.y  = element_text(size = 6, color="black"),
+    axis.title.y = element_text(size = 7, color="black", vjust=2),
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.background = element_rect(fill = "gray91"),
+    panel.grid.minor = element_blank(),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    panel.border = element_rect(linewidth = 0.2),
+    plot.margin  = margin(t = 2, r = 2, b = 2, l = 0)) +
+  geom_label(data = tibble(x = 2.2, y = split_label_y, label = "Split by sample-UDI"), aes(x = x, y = y, label = label), inherit.aes = FALSE,
+    size = 2.6, hjust = 0, fill = "gray91", label.size = 0)
+```
+
+
+build number table
+```{r}
+extract_outputs_bulk <- function(sample_name) {
+  df_one <- df_post_all %>% filter(sample == sample_name)
+
+  run_file <- samples %>%
+    filter(sample == sample_name) %>%
+    pull(summary_tsv) %>%
+    .[1]
+
+  total_in <- df_trunk_all %>%
+    filter(summary_tsv == run_file, Step == "Total_in") %>%
+    pull(OutputReads) %>%
+    .[1]
+
+  filter_out <- df_trunk_all %>%
+    filter(summary_tsv == run_file, Step == "Filter_out") %>%
+    pull(OutputReads) %>%
+    .[1]
+
+  c(Total_in   = total_in,
+    Filter_out = filter_out,
+    Demux_out  = df_one$OutputReads[df_one$Step == "Demux_out"][1],
+    Group_sets = df_one$OutputReads[df_one$Step == "Group_sets"][1],
+    Seqtag_out = df_one$OutputReads[df_one$Step == "Seqtag_out"][1],
+    AIRR_out   = df_one$OutputReads[df_one$Step == "AIRR_out"][1],
+    AIRR_prod  = df_one$OutputReads[df_one$Step == "AIRR_prod"][1])
+}
+```
+
+```{r}
+table_numeric <- samples %>%
+  mutate(values = map(sample, extract_outputs_bulk)) %>%
+  unnest_wider(values) %>%
+  mutate(Sample_display = sample)
+
+# collapse shared columns within each run
+cols_to_collapse <- c("Total_in", "Filter_out")
+
+table_display <- table_numeric %>%
+  group_by(summary_tsv) %>%
+  arrange(sample, .by_group = TRUE) %>%
+  mutate(across(all_of(cols_to_collapse),
+           ~ if_else(row_number() > 1, "\"", as.character(.x)))) %>%
+  ungroup() %>%
+  mutate(across(-c(sample, summary_tsv, udi, col, Sample_display),
+           ~ if_else(is.na(.x), "/", as.character(.x))))
+
+tbl_df <- table_display %>%
+  mutate(row_id        = row_number(),
+    Sample_factor = factor(row_id, levels = rev(row_id)),
+    row_parity    = if_else(row_id %% 2 == 1, "odd", "even"),
+    group_color   = unname(sample_cols[as.character(sample)]))
+
+labels_named <- setNames(
+  sprintf("<span style='color:%s; font-weight:bold'>%s</span>", tbl_df$group_color, tbl_df$Sample_display), tbl_df$Sample_factor)
+
+tbl_long <- tbl_df %>%
+  pivot_longer(
+    cols = c(Total_in, Filter_out, Demux_out, Group_sets, Seqtag_out, AIRR_out, AIRR_prod),
+    names_to  = "Step",
+    values_to = "value") %>%
+  mutate(Step = factor(Step, levels = c("Total_in","Filter_out","Demux_out","Group_sets","Seqtag_out","AIRR_out","AIRR_prod")))
+```
+
+table figure
+```{r}
+table_plot <- ggplot(tbl_long, aes(x = Step, y = Sample_factor)) +
+  geom_tile(aes(fill = row_parity), width = 0.95, height = 0.95, color = NA) +
+  scale_fill_manual(values = c(odd = "#F5F5F5", even = "#E0E0E0"), guide = "none") +
+  geom_text(aes(label = value), size = 2.5, color = "black") +
+  scale_y_discrete(labels = labels_named, name = NULL) +
+  scale_x_discrete(position = "top", name = NULL) +
+  theme_panel2_table +
+  theme(
+    axis.text.x = element_text(size = 6, color = "black"),
+    axis.text.y = ggtext::element_markdown(size = 6, hjust = 1)
+  )
+```
+
+combined curves and table figure
+```{r, fig.width=7, fig.height=3.8}
+# Plot + table
+bulk_table_figure <- free(bulk_retention, type = "label") / table_plot +
+  plot_layout(heights = c(1,1))
+
+s1_b <- plot_grid(bulk_table_figure)
+
+s1_b <- s1_b + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, r=5)))
+s1_b
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp1/intermediates/")
+saveRDS(s1_b, file=file.path(save_dir, "s1_b.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+
+

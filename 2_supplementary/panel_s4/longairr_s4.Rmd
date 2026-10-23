@@ -1,0 +1,90 @@
+---
+title: "longairr_s4"
+author: "Jonas Schuck"
+date: "2026-10-13"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure S4
+#
+########################################
+
+```{r}
+library(cowplot)
+library(ggplot2)
+library(patchwork)
+```
+
+read intermediates
+```{r}
+ps4_a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_a.rds")
+
+ps4_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_b.rds")
+ps4_c <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_c.rds")
+ps4_d <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_d.rds")
+
+ps4_e <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_e.rds")
+ps4_f <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/ps4_f.rds")
+ps4_g <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/ont_pb_overlap_matching.rds")
+
+```
+
+
+```{r}
+# Space for panel letters above the plots.
+panel_margin <- theme(plot.margin = margin(2, 2, 2, 2))
+
+# Rebuild b/c from the individual plots, without their old panel letters.
+ps4_b_c <- plot_grid(ps4_b + panel_margin, ps4_c + panel_margin, ncol = 1, labels = c("b", "c"), label_size = 7,
+                     label_x = 0, label_y = 1, hjust = 0, vjust = 1)
+
+s4_top_row <- plot_grid(ps4_a + panel_margin, ps4_b_c, ncol = 2, rel_widths = c(1, 1), labels = c("a", ""), label_size = 7,
+  label_x = 0, label_y = 1, hjust = 0, vjust = 1)
+
+ps4_d_fixed <- ps4_d_fixed +
+  guides(color = guide_legend(nrow = 1), fill = guide_legend(nrow = 1)) +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal")
+ps4_d_aligned <- cowplot::ggdraw() +
+  cowplot::draw_plot(ps4_d_fixed, x = -0.07, y = 0, width = 1, height = 1)
+
+# Put the long clonotype identifier in the figure legend
+ps4_e_fixed <- ps4_e_fixed +
+  labs(title = NULL, subtitle = NULL) +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal")
+
+s4_d_g_hd <- plot_grid(ps4_d_aligned, ps4_g + panel_margin, ncol = 1, rel_heights = c(1, 0.9), labels = c("d", "g"),
+  label_size = 7, label_x = 0, label_y = 1, hjust = 0, vjust = 1)
+
+s4_e_f_hd <- plot_grid(ps4_e_fixed, ps4_f + panel_margin,
+  ncol = 1, rel_heights = c(0.55, 1), labels = c("e", "f"), label_size = 7,
+  label_x = 0, label_y = 1, hjust = 0, vjust = 1)
+
+s4_bot <- plot_grid(s4_d_g_hd, s4_e_f_hd, ncol = 2)
+
+s4_full <- plot_grid(s4_top_row, s4_bot, ncol = 1, rel_heights = c(3, 6.5)) +
+  theme(plot.margin = margin(2, 2, 2, 2))
+```
+
+```{r, fig.width=8, fig.height=9}
+s4_full
+```
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s4_ratio.pdf", plot=s4_full, width = 8, height = 9)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s4_ratio.png", plot=s4_full, width = 8, height = 9)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+

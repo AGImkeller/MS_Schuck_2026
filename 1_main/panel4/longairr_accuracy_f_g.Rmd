@@ -1,0 +1,250 @@
+---
+title: "longairr_accuracy_comparison"
+author: "Jonas Schuck"
+date: "2026-02-13"
+output: html_document
+---
+
+########################################
+#
+# Script contains analyis to compare V-region identity of matching UMI-SPBC
+# across S1_ONT_Q10, S1_ONT_Q17 and S1_PB_Q17. Groups are matching between all 
+# three datasets; figures show pairwise V-region identity from the matching pool.
+#
+# Scatter show pairwise dataset comparison of the V-region identity distribution.
+# Plots are split by group-support (< 3 and >= 3) as well as by receptor (BCR and TCR)
+#
+# Results are shown in LongAIRR Fig. 4f, 4g
+#
+########################################
+
+
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tibble)
+library(scales)
+library(stringr)
+library(cowplot)
+library(patchwork)
+```
+
+--------------------4_F_G-------------------
+-----V-region identity comparison for matching BCR and TCR sequences
+------------------------------------------
+
+```{r}
+#s12
+#b
+airr_path_12_bp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/", "ig_p_parse-select.tsv")
+#t
+airr_path_12_tp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/", "tr_p_parse-select.tsv")
+
+#s12_10
+#b
+airr_path_12_10sd_bp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd10_af5/airr/", "ig_p_parse-select.tsv")
+#t
+airr_path_12_10sd_tp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd10_af5/airr/", "tr_p_parse-select.tsv")
+
+#pacbio
+#b
+airr_path_pb_bp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/", "ig_p_parse-select.tsv")
+#t
+airr_path_pb_tp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/", "tr_p_parse-select.tsv")
+```
+
+read in samples
+```{r}
+# set-up for input and group comparisons
+samples_tbl <- tribble(
+  ~sample,     ~receptor, ~airr_tsv,
+  # TCR
+  "S1_ONT_Q17", "TCR",     airr_path_12_tp,
+  "S1_ONT_Q10", "TCR",     airr_path_12_10sd_tp,
+  "S1_PB_Q17",  "TCR",     airr_path_pb_tp,
+  # BCR
+  "S1_ONT_Q17", "BCR",     airr_path_12_bp,
+  "S1_ONT_Q10", "BCR",     airr_path_12_10sd_bp,
+  "S1_PB_Q17",  "BCR",     airr_path_pb_bp)
+
+samples_keep <- c("S1_ONT_Q10", "S1_ONT_Q17", "S1_PB_Q17")
+
+comparisons <- tribble(
+  ~g1,         ~g2,
+  "S1_ONT_Q10", "S1_ONT_Q17",
+  "S1_ONT_Q10", "S1_PB_Q17",
+  "S1_ONT_Q17", "S1_PB_Q17") %>%
+  mutate(comp = paste0(g1, " − ", g2))
+```
+
+
+---function set up
+
+functions to read in data / find matching groups (spbc, umi) and sort them into groups based on consensus support
+
+also one function to create in-plot legend text
+```{r}
+within_cutoff <- 1 # to compute shared similarity within certain range (here within 1%)
+axis_xlim <- c(75, 100)
+axis_ylim <- c(75, 100)
+
+# read in function including filtering of sequence groups with poly-T UMI annotation, mismatching locus annotation or N-nucleotides
+read_airr <- function(path, sample, receptor) {
+  dt <- fread(path, sep = "\t", data.table = FALSE)
+
+  dt %>%
+       mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+              start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+    filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction)) %>%
+    filter(!grepl("N", v_region_sequence)) %>%
+    transmute(sample = sample,
+      receptor = receptor,
+      spbc = as.character(spbc),
+      umi = as.character(umi),
+      locus = as.character(locus),
+      consensus_count = suppressWarnings(as.numeric(consensus_count)),
+      v_identity = suppressWarnings(as.numeric(v_identity))) %>%
+    mutate(v_identity = if_else(!is.na(v_identity) & v_identity <= 1, v_identity * 100, v_identity),
+           match_key = paste(spbc, umi, sep = "|"))
+         # match_key = paste(spbc, umi, locus, sep = "|"))
+}
+
+all_airr <- bind_rows(lapply(seq_len(nrow(samples_tbl)), function(i) {
+  read_airr(samples_tbl$airr_tsv[i], samples_tbl$sample[i], samples_tbl$receptor[i])}))
+
+# matching molecules across all samples and split into two categories ( consensus support (n < 3 vs n >= 3))
+build_bins_n1 <- function(df_r) {
+
+  paired_base <- df_r %>%
+    filter(sample %in% samples_keep, is.finite(v_identity)) %>%
+    group_by(match_key) %>%
+    filter(n_distinct(sample) == length(samples_keep)) %>%
+    ungroup()
+
+  binned <- bind_rows(
+    paired_base %>%
+      filter(!is.na(consensus_count), consensus_count < 3) %>%
+      mutate(bin = "Consensus: < 3 reads"),
+
+    paired_base %>%
+      filter(!is.na(consensus_count), consensus_count >= 3) %>%
+      mutate(bin = "Consensus: ≥ 3 reads")) %>%
+    mutate(bin = factor(bin, levels = c("Consensus: < 3 reads", "Consensus: ≥ 3 reads")))
+  # only keep pairs where all matches are in the same group (!!)
+  binned %>%
+    group_by(bin, match_key) %>%
+    filter(n_distinct(sample) == length(samples_keep)) %>%
+    ungroup() %>%
+    mutate(bin = factor(bin, levels = c("Consensus: < 3 reads", "Consensus: ≥ 3 reads")))
+}
+
+# long format including bin, comparison, x, y and delta info
+make_scatter_long <- function(df_binned) {
+  wide <- df_binned %>%
+    select(bin, match_key, sample, v_identity) %>%
+    pivot_wider(names_from = sample, values_from = v_identity) %>%
+    filter(if_all(all_of(samples_keep), ~ is.finite(.x)))
+
+  # build long df for all comparisons (pairwise ONT's vs PB)
+  out <- bind_rows(lapply(seq_len(nrow(comparisons)), function(i) {
+                  g1 <- comparisons$g1[i]
+                  g2 <- comparisons$g2[i]
+                  comp <- comparisons$comp[i]
+                  # new table with bin, comparison (comp), x (g2), y (g1) and delta
+                  wide %>%
+                    transmute(
+                      bin, comp,
+                      x = .data[[g2]],
+                      y = .data[[g1]],
+                      delta = .data[[g1]] - .data[[g2]])
+                }))
+
+  out %>%
+    mutate(comp = factor(comp, levels = comparisons$comp),
+           bin  = factor(bin, levels = c("Consensus: < 3 reads", "Consensus: ≥ 3 reads")))
+      #bin  = factor(bin, levels = c("n = 1", "n > 1", "n > 2", "n > 3")))
+}
+
+
+# figure labels for: N (matching sequence groups), mean, % within similarity-cutoff
+make_stats_labels <- function(df_long) {
+  df_long %>%
+    group_by(bin, comp) %>%
+    summarise(
+      N = n(),
+      mean_delta = mean(delta),
+      pct_within = mean(abs(delta) <= within_cutoff) * 100, .groups = "drop") %>%
+    mutate(label = paste0("N = ", comma(N),
+                   "\nMean Δ = ", sprintf("%.2f", mean_delta),
+                   "\n% within ±", within_cutoff, " = ", sprintf("%.1f", pct_within), "%"),
+          x_lab = axis_xlim[1] + 11, y_lab = axis_ylim[1] + 5.5)
+}
+```
+
+figure function
+```{r}
+plot_scatter_grid <- function(df_long, x_lab_text = "BCR V identity (%) - right platform", y_lab_text = "BCR V identity (%) - left platform", title = NULL) {
+
+  labs_df <- make_stats_labels(df_long)
+
+  ggplot(df_long, aes(x = x, y = y)) +
+    geom_point(alpha = 0.18, size = 0.7) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red",linewidth = 0.35) +
+    facet_grid(bin ~ comp) +
+    geom_text(data = labs_df, aes(x = x_lab, y = y_lab, label = label), inherit.aes = FALSE, hjust = 0, vjust = 1, size = 1.3) +      # size of in-figure text
+    coord_cartesian(xlim = axis_xlim, ylim = axis_ylim) +
+    scale_x_continuous(breaks = c(50, 60, 70, 80, 90, 95, 99)) +
+    scale_y_continuous(breaks = c(50, 60, 70, 80, 90, 95, 99)) +
+    labs(title = title, x = x_lab_text, y = y_lab_text) +
+    theme_bw(base_size = 7) +                                       # important setting
+    theme(panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+      panel.border = element_rect(linewidth = 0.2),
+      axis.title = element_text(size = 7, color = "black"),
+      axis.text = element_text(size = 6, color = "black"),                          
+      strip.text.x = element_text(size = 4.5, face = "bold"),                   # text size in facet header (x)
+      strip.text.y = element_text(size = 4.5, face = "bold"),                   # text size in facet header (y)
+      strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+      plot.title = element_text(size = 7, color = "black"),
+      plot.margin = margin(0, 0, 0, b=5),                                       # important to remove excess around (can be slightly added later again)
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA))
+}
+```
+
+
+run functions
+```{r}
+# run functions
+df_bcr <- all_airr %>% filter(receptor == "BCR")
+df_tcr <- all_airr %>% filter(receptor == "TCR")
+
+bcr_long <- df_bcr %>% build_bins_n1() %>% make_scatter_long()
+tcr_long <- df_tcr %>% build_bins_n1() %>% make_scatter_long()
+
+# 4f
+p_bcr <- plot_scatter_grid(bcr_long, x_lab_text = "BCR V identity (%) - right platform", y_lab_text = "BCR V identity (%) - left platform")
+# 4g
+p_tcr <- plot_scatter_grid(tcr_long, x_lab_text = "TCR V identity (%) - right platform", y_lab_text = "TCR V identity (%) - left platform")
+```
+
+combined figure 4G + 4H
+```{r, fig.height=4, fig.width=4}
+p_identity_correlation <- plot_grid(p_bcr, p_tcr, nrow=2, labels = c("f", "g"), label_size = 7)
+p4_f_g <- p_identity_correlation + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, b=0))) 
+
+p4_f_g
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/")
+saveRDS(p4_f_g, file=file.path(save_dir, "p4_f_g.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,83 @@
+---
+title: "s3"
+author: "Jonas Schuck"
+date: "2026-04-09"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure S3
+#
+########################################
+
+```{r}
+library(png)
+library(cowplot)
+library(patchwork)
+library(ggplot2)
+```
+
+
+#read in intermediates
+```{r}
+#benchmarks
+s3_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_b.rds")
+s3_c <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_c.rds")
+
+#A B C D
+s3_a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_a.rds")
+s3_d <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_d.rds")
+s3_e <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_e.rds")
+s3_f <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_f.rds")
+
+```
+
+
+```{r}
+s3_top_bench <- plot_grid(s3_b, s3_c, labels = c("b", "c"),
+  label_size = 7, nrow = 2, ncol=1, hjust = 0, vjust = 1.0, rel_heights = c(1,0.8))
+s3_top_bench
+```
+
+
+```{r, fig.width=7, fig.height=5}
+s3_top <- plot_grid(s3_a, s3_top_bench, ncol=2, labels = c("a", ""), label_size = 7, hjust = 0, vjust = 1.0, rel_widths = c(0.8,1)) 
+s3_top
+```
+
+
+```{r, fig.width=7}
+s3_left <- plot_grid(s3_d, s3_e, s3_f, labels = c("d", "e", "f"),
+  label_size = 7, nrow = 3, hjust = 0, vjust = 1.0)
+```
+
+
+```{r, fig.width=7.5}
+s3_middle <- plot_grid(s3_d, s3_e, labels=c("d", "e"), label_size = 7, ncol = 2, hjust = 0, vjust = 1.0)
+s3_middle
+```
+
+
+
+```{r, fig.width=7}
+s3_bot <- plot_grid(s3_f, NULL, labels=c("f", ""), label_size = 7, ncol=2, rel_widths = c(0.9,0.8))
+#s3_bot
+```
+
+```{r, fig.height=8, fig.width=7.5}
+s3_complete <- plot_grid(s3_top, s3_middle, s3_bot, nrow=3, rel_heights = c(0.8, 0.3, 0.25))
+s3_complete
+```
+
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s3.pdf", plot=s3_complete, width = 7.5, height = 8)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s3.png", plot=s3_complete, width = 7.5, height = 8)
+```
+
+```{r}
+sessionInfo()
+```
+
+

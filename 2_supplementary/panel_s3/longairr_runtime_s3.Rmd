@@ -1,0 +1,105 @@
+---
+title: "subsampling_runtime"
+author: "Jonas Schuck"
+date: "2025-09-14"
+output: html_document
+---
+
+
+########################################
+#
+# Script generates figure for runtime of process capturing: filter + subsampling + MSA + consensus process
+# for the representative large UMI-SPBC group (S3_ONT_Q17) shown in Fig. 4d.
+#
+# Runtime values are set up manually and taken from log file
+#
+# Results are shown in LongAIRR Fig. S3
+#
+########################################
+
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+```
+
+--------------------S3_C-------------------
+-----runtime MSA+Consensus per subsample (S3_ONT_Q17 - ACGTAGATTGCTGATGTACCCCAGGAAG)
+------------------------------------------
+
+```{r}
+#taken from
+#/home/jonas/mnt_AG_Imkeller/group_members/schuck/nanoairr/manuscript/data/subsampling/new/sp8/2_longairr_out/subsample.log
+
+
+# TODO use new subsample log: ~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/large_groups_subsampling/sp8/2_results/ACGTAGATTGCTGATGTACCCCAGGAAG/subsample.log
+
+runtime_df <- data.frame(
+  subsample = c( 5000, 2500, 2000, 1500, 1000, 750, 500, 250, 100, 50, 10, 5, 4, 3, 2, 1,
+                 5000, 2500, 2000, 1500, 1000, 750, 500, 250, 100, 50, 10, 5, 4, 3, 2, 1,
+                 5000, 2500, 2000, 1500, 1000, 750, 500, 250, 100, 50, 10, 5, 4, 3, 2, 1,
+                 5000, 2500, 2000, 1500, 1000, 750, 500, 250, 100, 50, 10, 5, 4, 3, 2, 1,
+                    5000,       2500,       2000,       1500,     1000,       750,         500,        250,        100,        50,          10,         5,          4,          3,          2,          1),
+  elapsed   = c("00:06:28", "00:02:44", "00:01:44","00:00:58", "00:00:57", "00:00:26", "00:00:22", "00:00:10", "00:00:03", "00:00:03", "00:00:07", "00:00:02", "00:00:09", "00:00:02", "00:00:04", "00:00:02",
+                "00:09:04", "00:02:31", "00:02:05","00:01:29", "00:00:42", "00:00:35", "00:00:19", "00:00:15", "00:00:08", "00:00:09", "00:00:03", "00:00:03", "00:00:03", "00:00:02", "00:00:02", "00:00:03",
+                "00:05:29", "00:01:32", "00:02:26","00:00:59", "00:00:53", "00:00:18", "00:00:49", "00:00:30", "00:00:04", "00:00:08", "00:00:02", "00:00:07", "00:00:02", "00:00:03", "00:00:04", "00:00:03",
+                "00:05:52", "00:02:41", "00:02:23","00:01:11", "00:01:03", "00:00:26", "00:01:00", "00:00:06", "00:00:05", "00:00:03", "00:00:03", "00:00:02", "00:00:03", "00:00:06", "00:00:03", "00:00:02", 
+                "00:08:09", "00:02:04", "00:01:35","00:01:25", "00:01:06", "00:00:26", "00:00:24", "00:00:25", "00:00:03", "00:00:12", "00:00:03", "00:00:03", "00:00:02", "00:00:03", "00:00:04", "00:00:02"))
+
+# Convert to seconds / minutes
+runtime_df <- runtime_df %>%
+  mutate(runtime_sec = period_to_seconds(hms(elapsed)),
+         runtime_min = runtime_sec / 60)
+
+runtime_df
+```
+
+
+```{r}
+summary_df <- runtime_df %>%
+  group_by(subsample) %>%
+  summarise(
+    mean_sec   = mean(runtime_sec),
+    median_sec = median(runtime_sec),
+    mean_min   = mean(runtime_min),
+    median_min = median(runtime_min),
+    .groups = "drop")
+
+#check
+head(summary_df)
+```
+
+```{r, fig.width=5, fig.height=4}
+runtime_large_main <- ggplot(summary_df, aes(x = factor(subsample), y = median_min, group = 1)) +
+  geom_line(color = "black", linewidth = 0.5) +
+  geom_point(size = 1.5, color = "black") +
+  labs(x = "Number of reads", y = "Median runtime (minutes)") +
+  scale_y_continuous(breaks = c(1, 2, 3, 4, 5, 6, 7, 8)) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey80"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black", angle = 45, hjust = 1, vjust = 1),
+    axis.text.y = element_text(size = 6, color = "black"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+```
+
+```{r, fig.width=3.2, fig.height=2.2}
+s3_f <- runtime_large_main + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+s3_f
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/")
+saveRDS(s3_f, file=file.path(save_dir, "s3_f.rds"))
+```
+
+```{r}
+sessionInfo()
+```

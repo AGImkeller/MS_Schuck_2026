@@ -1,0 +1,593 @@
+---
+title: "longairr p5 figures visium"
+output: html_document
+date: "2026-01-29"
+---
+
+########################################
+#
+# Script contains analyses to determine a filter strategy for 
+# downstream spAIRR analysis:
+# 'Base': all reads, 'F1': consensus count > 1, 'F2': consenus count > 2
+# 'F3': consensus count > 3.
+#
+# Analyses are performed on representable datasets from Visium V1 (S1_ONT_Q17)
+#
+# Analysis include heavy-light chain UMI count per SPBC correlation across filter strategies.
+# Spatial distribution showing number of distinct UMIs per spatial spot across filter strategies.
+# Spatial distribution of representable light chain clone across filter strategies
+# Correlation of number of UMIs per SPBC and total number of reads per SPBC across filter strategies
+# Number of unique CDR3 nucleotide sequences present in < 3 SPBCs vs >= SPBCs
+#
+# Results are shown in LongAIRR Fig. 5 and S4
+#
+########################################
+
+
+```{r}
+library(tidyverse)
+library(cowplot)
+library(patchwork)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel5/intermediates/")
+```
+
+# Read data
+```{r}
+nano_1_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+# 
+nano_1_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+nano_2_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp7_sd17_af5/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+
+nano_2_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp7_sd17_af5/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+nano_3_bcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/airr/tmp/ig/ig_db-pass.tsv", sep = "\t")
+
+nano_3_tcr <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/airr/tmp/tr/tr_db-pass.tsv", sep = "\t")
+```
+
+```{r}
+nano_df <- rbind(rbind(nano_1_bcr %>% mutate(type = "BCR"), 
+                       nano_1_tcr %>% mutate(type = "TCR")) %>% mutate(data = "S1_ONT_Q17"),
+                 rbind(nano_2_bcr %>% mutate(type = "BCR"), 
+                       nano_2_tcr %>% mutate(type = "TCR")) %>% mutate(data = "S2_ONT_Q17"),
+                 rbind(nano_3_bcr %>% mutate(type = "BCR"), 
+                       nano_3_tcr %>% mutate(type = "TCR")) %>% mutate(data = "S3_ONT_Q17")) %>%
+          mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+                      start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+               filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction)) %>%
+               filter(!grepl("N", v_region_sequence))
+```
+
+## correlation of chain expression
+```{r}
+chain_correlation <- function(df, tcr_or_bcr) {
+  # if bcr combine K+L
+  if(tcr_or_bcr == "BCR") {
+    res <- df %>%
+      filter(type == "BCR") %>%
+      select(spbc, n_keep, data, locus, umi) %>%
+      group_by(spbc, data, locus) %>%
+      summarize(cnt_umi_spbc = n_distinct(umi)) %>%
+      pivot_wider(names_from = locus, values_from = cnt_umi_spbc, values_fill = 0) %>%
+      mutate(light = IGK + IGL)
+  }
+  else if(tcr_or_bcr == "TCR") {
+    res <- df %>%
+      filter(type == "TCR") %>%
+      select(spbc, n_keep, data, locus, umi) %>%
+      group_by(spbc, data, locus) %>%
+      summarize(cnt_umi_spbc = n_distinct(umi)) %>%
+      pivot_wider(names_from = locus, values_from = cnt_umi_spbc, values_fill = 0)
+  }
+  res
+}
+```
+
+
+Initial data wrangling for all filter approaches
+
+# Base
+```{r}
+#correlation
+base_bcr_cor_df <- chain_correlation(nano_df, "BCR") %>% dplyr::mutate(filt = "base")
+base_tcr_cor_df <- chain_correlation(nano_df, "TCR") %>% dplyr::mutate(filt = "base")
+```
+
+```{r}
+base_clone_df <- nano_df %>%
+  dplyr::mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+  group_by(clone_id, locus, data) %>%
+  summarize(n_umi_in_clone = n(), n_spbc_in_clone = n_distinct(spbc)) %>% dplyr::mutate(filt = "base")
+```
+
+```{r}
+base_spbc_df <- nano_df %>%
+  group_by(spbc, locus, data) %>%
+  summarize(nb_seqs = sum(consensus_count), nb_umis = n_distinct(umi))  %>% 
+  dplyr::mutate(filt = "base")
+```
+
+example
+```{r}
+nano_df %>%
+  group_by(locus, data) %>%
+  summarize(n = n(), n_spbc = n_distinct(spbc)) %>%
+  dplyr::filter(data == "S1_ONT_Q17")
+```
+
+# F1 - 1. Option: Remove all UMI/SPBC groups with <=1 seq
+```{r}
+nano_df_f1 <- nano_df %>%
+  dplyr::filter(n_keep > 1)
+```
+
+```{r}
+nano_df_f1 %>%
+  group_by(locus, data) %>%
+  summarize(n = n(), n_spbc = n_distinct(spbc)) %>%
+  dplyr::filter(data == "S1_ONT_Q17")
+```
+
+```{r}
+#correlation
+f1_bcr_cor_df <- chain_correlation(nano_df_f1, "BCR") %>% dplyr::mutate(filt = "F1")
+f1_tcr_cor_df <- chain_correlation(nano_df_f1, "TCR") %>% dplyr::mutate(filt = "F1")
+```
+
+```{r}
+f1_clone_df <- nano_df_f1 %>%
+  mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+  group_by(clone_id, locus, data) %>%
+  summarize(n_umi_in_clone = n(), n_spbc_in_clone = n_distinct(spbc)) %>% mutate(filt = "F1")
+```
+
+```{r}
+f1_spbc_df <- nano_df_f1 %>%
+  group_by(spbc, locus, data) %>%
+  summarize(nb_seqs = sum(consensus_count), nb_umis = n_distinct(umi))  %>% 
+ mutate(filt = "F1")
+```
+
+# F2 -2. Option: Only keep sequences with at least 3 seuqences of same clonotype and SPBC
+```{r}
+nano_df_f2 <- nano_df %>%
+  dplyr::filter(n_keep > 2)
+```
+
+```{r}
+nano_df_f2 %>%
+  group_by(locus, data) %>%
+  summarize(n = n(), n_spbc = n_distinct(spbc)) %>%
+  dplyr::filter(data == "S1_ONT_Q17")
+```
+
+```{r}
+#correlation
+f2_bcr_cor_df <- chain_correlation(nano_df_f2, "BCR") %>% dplyr::mutate(filt = "F2")
+f2_tcr_cor_df <- chain_correlation(nano_df_f2, "TCR") %>% dplyr::mutate(filt = "F2")
+```
+
+```{r}
+f2_clone_df <- nano_df_f2 %>%
+  dplyr::mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+  group_by(clone_id, locus, data) %>%
+  summarize(n_umi_in_clone = n(), n_spbc_in_clone = n_distinct(spbc)) %>% dplyr::mutate(filt = "F2")
+```
+
+```{r}
+f2_spbc_df <- nano_df_f2 %>%
+  group_by(spbc, locus, data) %>%
+  summarize(nb_seqs = sum(consensus_count), nb_umis = n_distinct(umi))  %>% 
+  dplyr::mutate(filt = "F2")
+```
+
+
+# F3 - 3. Option: Keep sequence with UMI > 1 or if same clone found at spot (also UMI = 1)
+```{r}
+nano_df_f3 <- nano_df %>%
+  dplyr::filter(n_keep > 3)
+```
+
+```{r}
+nano_df_f3 %>%
+  group_by(locus, data) %>%
+  summarize(n = n(), n_spbc = n_distinct(spbc)) %>%
+  dplyr::filter(data == "S1_ONT_Q17")
+```
+
+```{r}
+#correlation
+f3_bcr_cor_df <- chain_correlation(nano_df_f3, "BCR") %>% dplyr::mutate(filt = "F3")
+f3_tcr_cor_df <- chain_correlation(nano_df_f3, "TCR") %>% dplyr::mutate(filt = "F3")
+```
+
+```{r}
+f3_clone_df <- nano_df_f3 %>%
+  dplyr::mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+  group_by(clone_id, locus, data) %>%
+  summarize(n_umi_in_clone = n(), n_spbc_in_clone = n_distinct(spbc)) %>% dplyr::mutate(filt = "F3")
+```
+
+```{r}
+nano_df_f3 %>%
+  dplyr::mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+  group_by(clone_id, locus, data) %>%
+  dplyr::mutate(n_umi_in_clone = n(), n_spbc_in_clone = n_distinct(spbc)) %>%
+  dplyr::filter(locus == "IGH") %>% arrange(desc(n_umi_in_clone), desc(consensus_count)) %>% head(100)
+```
+
+```{r}
+f3_spbc_df <- nano_df_f3 %>%
+  group_by(spbc, locus, data) %>%
+  summarize(nb_seqs = sum(consensus_count), nb_umis = n_distinct(umi))  %>% 
+  dplyr::mutate(filt = "F3")
+```
+
+# Correlation summary
+--------------
+S4b
+--------------
+
+```{r}
+corr_igexp_plt <- rbind(base_bcr_cor_df, f1_bcr_cor_df, f2_bcr_cor_df, f3_bcr_cor_df) %>%
+  dplyr::filter(data == "S1_ONT_Q17") %>%
+  ggplot(aes(x = IGH, y = light)) +
+  geom_point(alpha = 0.3, size = 0.6) +
+  geom_abline(linewidth = 0.35) +
+  scale_y_log10() +
+  scale_x_log10() +
+  facet_wrap(~filt, ncol = 4) +
+  xlab("Heavy chain (IGH)\nUMI count per SPBC (log10)") +
+  ylab("Light chain (IGK + IGL)\nUMI count per SPBC\n(log10)") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+```
+
+```{r, fig.width=2.5, fig.height=1.5}
+ps4_b <- corr_igexp_plt + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+ps4_b
+```
+
+```{r}
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+#save_dir_supp <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/")
+#saveRDS(ps4_b, file=file.path(save_dir_supp, "ps4_b.rds"))
+```
+
+
+# Spatial coordinates
+--------------
+5b
+--------------
+
+```{r}
+sp_bc <- read.csv("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/2_initial_submission/main/panel5/scripts/katharina_scripts/barcode_coordinates.csv", sep = "\t", header = FALSE) %>%
+  dplyr::rename(spbc = V1, x = V2, y = V3)
+```
+
+```{r}
+umi_dist_plt <- full_join(rbind(base_spbc_df, f1_spbc_df, f2_spbc_df, f3_spbc_df), sp_bc, by = "spbc") %>%
+  drop_na() %>%
+  filter(data == "S1_ONT_Q17") %>%
+  filter(locus %in% c("IGH", "IGK", "IGL")) %>%
+  mutate(nb_umis_bin = case_when(
+      nb_umis <= 1  ~ "1",
+      nb_umis <= 5  ~ "2-5",
+      nb_umis <= 10 ~ "6-10",
+      nb_umis <= 50 ~ "11-50",
+      nb_umis < 100 ~ "51-99",
+      nb_umis >= 100 ~ "≥100"),
+    nb_umis_bin = factor(nb_umis_bin, levels = c("≥100", "51-99", "11-50", "6-10", "2-5", "1"))) %>%
+  ggplot(aes(x = x, y = y, color = nb_umis_bin)) +
+  geom_point(size = 0.2, alpha = 0.85) +
+  facet_grid(locus ~ filt) +
+  scale_color_manual(
+    values = c(
+      "1"     = "gray65",
+      "2-5"   = "#2f5e8f",
+      "6-10"  = "#1b9e77",
+      "11-50" = "#bf8630",
+      "51-99" = "#d95f02",
+      "≥100"  = "red3"),
+    drop = FALSE, name = "  Number of\nDistinct UMIs") +
+  labs(x = "x-coordinate", y = "y-coordinate") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    #panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(l=-4),
+    strip.text.x = element_text(size = 6.5, color = "black"),
+    strip.text.y = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)) +
+  guides(color = guide_legend(override.aes = list(size = 1)))
+```
+
+```{r, fig.width=5, fig.height=3}
+p5_b <- umi_dist_plt +
+  patchwork::plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+p5_b
+```
+
+```{r}
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+#saveRDS(p5_b, file=file.path(save_dir, "p5_b.rds"))
+```
+
+# Look at clone recovery
+--------------
+5c
+--------------
+
+Representative IGK clone spatial distribution
+
+```{r}
+clone_pick_df2 <- rbind(
+  nano_df %>%
+    mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+    group_by(clone_id, spbc) %>%
+    mutate(n_seqs_in_clone_spbc = n()) %>%
+    mutate(filt = "base"),
+
+  nano_df_f1 %>%
+    mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+    group_by(clone_id, spbc) %>%
+    mutate(n_seqs_in_clone_spbc = n()) %>%
+    mutate(filt = "F1"),
+
+  nano_df_f2 %>%
+    mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+    group_by(clone_id, spbc) %>%
+    mutate(n_seqs_in_clone_spbc = n()) %>%
+    mutate(filt = "F2"),
+
+  nano_df_f3 %>%
+   mutate(clone_id = paste(v_call, j_call, junction, sep = "_")) %>%
+    group_by(clone_id, spbc) %>%
+    mutate(n_seqs_in_clone_spbc = n()) %>%
+    mutate(filt = "F3")) %>%
+  select(-any_of(c("x", "y"))) %>%
+  filter(v_call == "IGKV1-13*02,IGKV1D-13*01,IGKV1D-13*02",
+    j_call == "IGKJ4*01",
+    junction == "TGTCAACAGTTTAATACTTACCCTCACGCGCTCACTTTC") %>%
+  full_join(sp_bc, by = "spbc") %>%
+  group_by(filt, spbc, x, y, data) %>%
+  summarise(n_umi = n_distinct(umi),
+    sum_reads = sum(n_keep),
+    .groups = "drop")
+```
+
+```{r}
+clone_subtitle <- paste(
+  "IGKV1-13*02,IGKV1D-13*01,IGKV1D-13*02 | IGKJ4*01 |",
+  "TGTCAACAGTTTAATACTTACCCTCACGCGCTCACTTTC")
+
+
+l_clone_ex <- clone_pick_df2 %>%
+  drop_na() %>%
+  mutate(n_umi_bin = case_when(
+      n_umi <= 1  ~ "1",
+      n_umi <= 2  ~ "2",
+      n_umi <= 3  ~ "3",
+      n_umi <= 4  ~ "4",
+      n_umi < 10  ~ "5-9",
+      n_umi >= 10 ~ "≥10"),
+    n_umi_bin = factor(n_umi_bin, levels = c("≥10", "5-9", "4", "3", "2", "1"))) %>%
+  ggplot(aes(x = x, y = y, color = n_umi_bin)) +
+  geom_point(size = 0.2, alpha = 0.8) +
+  facet_grid(data ~ filt) +
+  facet_grid(data ~ filt, labeller = labeller(data = c("S1_ONT_Q17" = "S1_ONT_Q17\nVisium V1"))) +
+  scale_color_manual(
+    values = c(
+      "1"   = "gray80",
+      "2"   = "#2f5e8f",
+      "3"   = "#1b9e77",
+      "4"   = "#bf8630",
+      "5-9" = "#d95f02",
+      "≥10" = "red3"),
+    drop = FALSE, name = "  Number of\nDistinct UMIs") +
+  labs(x = "x-coordinate", y = "y-coordinate", subtitle = paste("Clonotype:", clone_subtitle)) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(t = -4),
+    legend.margin = margin(t=-4),
+    strip.text.x = element_text(size = 6.5, color = "black"),
+    strip.text.y = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.subtitle = element_text(size = 5, color = "black"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom") +
+    guides(color = guide_legend(override.aes = list(size = 1), nrow=1)) 
+
+```
+
+```{r, fig.width=4.5, fig.height=1.8}
+p5_c <- l_clone_ex + plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+p5_c
+```
+
+```{r}
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+#saveRDS(p5_c, file=file.path(save_dir, "p5_c.rds"))
+```
+
+--------------
+5d
+--------------
+
+nb umis vs nb of seqs
+
+```{r}
+l_clone_ex_scatter <- clone_pick_df2 %>%
+  drop_na() %>%
+  ggplot(aes(x = n_umi, y = sum_reads)) +
+  geom_point(size = 0.5, alpha = 0.4) +
+  geom_abline(linewidth = 0.35) +
+  scale_y_log10() +
+  scale_x_log10() +
+  facet_grid(data ~ filt,
+  labeller = labeller(data = c("S1_ONT_Q17" = "S1_ONT_Q17\nVisium V1"))) +
+  labs(x = "Number of UMIs\nin Clone at Spot (log10)", y = "Number of Sequences\nin Clone at Spot (log10)") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    strip.text.x = element_text(size = 6.5, color = "black"),
+    strip.text.y = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+```
+
+```{r, fig.width=3.5, fig.height=1.4}
+p5_d <- l_clone_ex_scatter + plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+p5_d
+```
+
+```{r}
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+#saveRDS(p5_d, file=file.path(save_dir, "p5_d.rds"))
+```
+
+--------------
+5f
+--------------
+
+Number of seqs in biggest umi group vs. nb of SPBCs in clone
+```{r}
+clone_spbc_df <- rbind(nano_df  %>%
+  mutate(clone_id = junction) %>%
+  group_by(clone_id, spbc) %>%
+  mutate(n_seqs_in_clone_spbc = n()) %>% mutate(filt = "base"),
+                nano_df_f1  %>%
+  mutate(clone_id = junction) %>%
+  group_by(clone_id, spbc) %>%
+  mutate(n_seqs_in_clone_spbc = n()) %>% mutate(filt = "F1"),
+                nano_df_f2 %>% mutate(filt = "F2") %>%
+  mutate(clone_id = junction),
+                nano_df_f3 %>% mutate(filt = "F3")) %>%
+  mutate(clone_id = junction) %>%
+  group_by(clone_id, locus, data, filt) %>%
+  summarize(n_spbc_in_clone = n_distinct(spbc), n_umi_in_clone = n_distinct(umi), max_n_cons_in_clone = max(n_keep)) 
+```
+
+```{r}
+clone_spbc_filt_bar <- clone_spbc_df %>%
+  dplyr::filter(data == "S1_ONT_Q17" & filt != "base") %>%
+  dplyr::mutate(multi_SPBC = n_spbc_in_clone > 2) %>%
+  ggplot(aes(x = filt, fill = multi_SPBC)) +
+  geom_bar() +
+  facet_wrap(~ locus, scales = "free", nrow = 1) +
+  scale_fill_manual(values = c("TRUE" = "#d95f02ff", "FALSE" = "grey"), name = "SPBCs per CDR3", labels = c("FALSE" = "<3 SPBCs", "TRUE" = "≥3 SPBCs")) +
+  labs(x = NULL, y = "Number of clones") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(l = -4),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)) +
+  guides(fill = guide_legend(override.aes = list(alpha = 1)))
+```
+
+```{r, fig.width=5, fig.height=2}
+p5_f <- clone_spbc_filt_bar + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=5, 5, 5, 5)))
+p5_f
+```
+
+```{r}
+#save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/main/panel5/intermediates/")
+#save_plot("figures/corr_igexp_HD.pdf", corr_igexp_plt, base_width = 6.5, base_height = 2.9)
+#saveRDS(p5_f, file=file.path(save_dir, "p5_f.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+------ table 3
+
+```{r}
+table3 <- bind_rows(
+  base = nano_df, F1 = nano_df_f1, F2 = nano_df_f2, F3 = nano_df_f3,
+  .id = "filter_strategy") %>%
+  filter(data == "S1_ONT_Q17") %>%
+  group_by(filter_strategy, locus) %>%
+  summarise(umi_spbc_groups = n(), spatial_barcodes = n_distinct(spbc),
+            .groups = "drop") %>%
+  pivot_longer(c(umi_spbc_groups, spatial_barcodes),
+               names_to = "metric", values_to = "count") %>%
+  mutate(filter_strategy = factor(filter_strategy, levels = c("base", "F1", "F2", "F3")),
+         metric = factor(metric, levels = c("umi_spbc_groups", "spatial_barcodes"))) %>%
+  pivot_wider(names_from = locus, values_from = count, values_fill = 0) %>%
+  select(metric, filter_strategy, IGH, IGK, IGL, TRA, TRB) %>%
+  arrange(metric, filter_strategy)
+
+table3
+```
+
+
+
+
+
+
+

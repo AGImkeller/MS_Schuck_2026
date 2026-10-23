@@ -1,0 +1,405 @@
+---
+title: "LongAIRR MSA / adaptive-filtering benchmark"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains the comparison of different MSA approaches across
+# adaptive-filtering margins for S1_ONT_Q17
+#
+# The figure shows consensus sequences, productive AIRR sequences and
+# filtered productive AIRR sequences
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(scales)
+```
+
+--------------------MSA / AF benchmark--------------
+--------------adaptive-filtering margins------------
+----------------------------------------------------
+
+```{r}
+sample_levels <- c("S1_ONT_Q17")
+af_levels <- c("noAF_noSub", "noAF", "AF02", "AF05", "AF10", "AF15")
+msa_levels <- c("MUSCLE3.8", "MAFFT-auto", "abPOA")
+
+metric_levels <- c("consensus_pass_input", "airr_productive_total", "filtered_productive_total")
+metric_labels <- c(consensus_pass_input = "Consensus sequences", airr_productive_total = "Productive AIRR\nTOTAL", filtered_productive_total = "Filtered productive AIRR\nTOTAL")
+
+msa_cols <- c("MUSCLE3.8" = "#D95F02", "MAFFT-auto" = "#1B9E77", "abPOA" = "#2F5E8F", "MUSCLE5" = "gray40")
+```
+
+```{r}
+run_manifest <- tribble(
+  ~sample, ~af_condition, ~msa_backend, ~run_dir,
+
+  # noAF_nosub
+  "S1_ONT_Q17", "noAF_noSub", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf_nosub/longairr_seqtag_airr/msa_noaf_nosub_muscle38",
+
+  "S1_ONT_Q17", "noAF_noSub", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf_nosub/longairr_seqtag_airr/msa_noaf_nosub_mafft",
+
+  "S1_ONT_Q17", "noAF_noSub", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf_nosub/longairr_seqtag_airr/msa_noaf_nosub_abpoa",
+
+  # noAF
+  "S1_ONT_Q17", "noAF", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf/longairr_seqtag_airr/msa_noaf_muscle38",
+
+  "S1_ONT_Q17", "noAF", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf/longairr_seqtag_airr/msa_noaf_mafft",
+
+  "S1_ONT_Q17", "noAF", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/noaf/longairr_seqtag_airr/msa_noaf_abpoa",
+
+  # AF02
+  "S1_ONT_Q17", "AF02", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af02/longairr_seqtag_airr/msa_af02_muscle38",
+
+  "S1_ONT_Q17", "AF02", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af02/longairr_seqtag_airr/msa_af02_mafft",
+
+  "S1_ONT_Q17", "AF02", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af02/longairr_seqtag_airr/msa_af02_abpoa",
+
+  # AF05
+  "S1_ONT_Q17", "AF05", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af05/longairr_seqtag_airr/msa_af05_muscle38",
+
+  "S1_ONT_Q17", "AF05", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af05/longairr_seqtag_airr/msa_af05_mafft",
+
+  "S1_ONT_Q17", "AF05", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af05/longairr_seqtag_airr/msa_af05_abpoa",
+
+  # AF10
+  "S1_ONT_Q17", "AF10", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af10/longairr_seqtag_airr/msa_af10_muscle38",
+
+  "S1_ONT_Q17", "AF10", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af10/longairr_seqtag_airr/msa_af10_mafft",
+
+  "S1_ONT_Q17", "AF10", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af10/longairr_seqtag_airr/msa_af10_abpoa",
+
+  # AF15
+  "S1_ONT_Q17", "AF15", "MUSCLE3.8",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af15/longairr_seqtag_airr/msa_af15_muscle38",
+
+  "S1_ONT_Q17", "AF15", "MAFFT-auto",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af15/longairr_seqtag_airr/msa_af15_mafft",
+
+  "S1_ONT_Q17", "AF15", "abPOA",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_margin/sp12_ont_sd17/msa_benchmarking/abpoa_mafft_muscle/af15/longairr_seqtag_airr/msa_af15_abpoa"
+) %>%
+  mutate(
+    sample = factor(sample, levels = sample_levels),
+    af_condition = factor(af_condition, levels = af_levels),
+    msa_backend = factor(msa_backend, levels = msa_levels),
+    run_dir = path.expand(run_dir),
+    downstream_summary = file.path(run_dir, "summary.tsv"),
+    ig_airr_table = file.path(run_dir, "airr", "ig_p_parse-select.tsv"),
+    tcr_airr_table = file.path(run_dir, "airr", "tr_p_parse-select.tsv")
+  )
+```
+
+read in functions
+```{r}
+read_summary_counts <- function(path) {
+  df <- read_tsv(path, skip = 2, show_col_types = FALSE, col_types = cols(.default = col_character())) %>%
+    mutate(InputReads = parse_number(InputReads),
+           OutputReads = parse_number(OutputReads))
+
+  ig_productive <- df %>%
+    filter(Step == "AIRR", str_detect(PathInfo, "Ig$"), OutputDescription == "Productive receptor sequences") %>%
+    slice(1) %>%
+    pull(OutputReads)
+
+  tcr_productive <- df %>%
+    filter(Step == "AIRR", str_detect(PathInfo, "TCR$"), OutputDescription == "Productive receptor sequences") %>%
+    slice(1) %>%
+    pull(OutputReads)
+
+  tibble(consensus_pass_input = df %>%
+      filter(Step == "Seqtag") %>%
+      dplyr::slice(1) %>%
+      pull(InputReads),
+    airr_productive_total = ig_productive + tcr_productive)
+}
+
+read_filtered_airr_count <- function(ig_path, tcr_path) {
+  bind_rows(read_tsv(ig_path, show_col_types = FALSE, col_types = cols(.default = col_character())),
+            read_tsv(tcr_path, show_col_types = FALSE, col_types = cols(.default = col_character()))) %>%
+    mutate(v_region_sequence = stringr::str_sub(toupper(sequence), start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+    filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction) & !grepl("N", v_region_sequence)) %>%
+    nrow()
+}
+
+read_run_counts <- function(summary_path, ig_path, tcr_path) {
+  bind_cols(read_summary_counts(summary_path),
+    tibble(filtered_productive_total = read_filtered_airr_count(ig_path, tcr_path)))
+}
+```
+
+read in data
+```{r}
+analysis_counts <- run_manifest %>%
+  mutate(counts = pmap(list(downstream_summary, ig_airr_table, tcr_airr_table), read_run_counts)) %>%
+  unnest(counts)
+```
+
+```{r}
+analysis_long <- analysis_counts %>%
+  select(sample, af_condition, msa_backend, all_of(metric_levels)) %>%
+  pivot_longer(cols = all_of(metric_levels), names_to = "metric_raw", values_to = "value") %>%
+  mutate(metric = factor(metric_labels[metric_raw], levels = metric_labels[metric_levels])
+  )
+```
+
+```{r}
+p_msa_af_main <- analysis_long %>%
+  ggplot(aes(x = af_condition, y = value, group = msa_backend, color = msa_backend)) +
+  geom_line(linewidth = 0.55, na.rm = TRUE) +
+  geom_point(size = 1.6, na.rm = TRUE) +
+  facet_wrap(~ metric, scales = "free_y", nrow = 1) +
+  scale_y_continuous(labels = comma, breaks = breaks_pretty(n = 6), expand = expansion(mult = c(0.03, 0.06))) +
+  scale_color_manual(values = msa_cols) +
+  labs(x = "Adaptive filter (AF) margin", y = "Sequence count", color = "MSA approach") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(angle = 35, hjust = 1),
+    legend.position = "bottom",
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    strip.text.x = element_text(size = 4.5, face = "bold"),                   # text size in facet header (x)
+    #strip.text.y = element_text(size = 4.5, face = "bold"), 
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+
+    # 
+    # theme(panel.grid.minor = element_blank(),
+    #   panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    #   panel.border = element_rect(linewidth = 0.2),
+    #   axis.title = element_text(size = 7, color = "black"),
+    #   axis.text = element_text(size = 6, color = "black"),                          
+    #   strip.text.x = element_text(size = 4.5, face = "bold"),                   # text size in facet header (x)
+    #   strip.text.y = element_text(size = 4.5, face = "bold"),                   # text size in facet header (y)
+    #   strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    #   plot.title = element_text(size = 7, color = "black"),
+    #   plot.margin = margin(0, 0, 0, b=5),                                       # important to remove excess around (can be slightly added later again)
+    #   panel.background = element_rect(fill = "white", color = NA),
+    #   plot.background = element_rect(fill = "white", color = NA))
+
+```
+
+```{r, fig.width=5, fig.height=2.5}
+p_msa_af_main
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/")
+saveRDS(p_msa_af_main, file.path(save_dir, "s3_b.rds"))
+```
+
+--------------------group-size threshold--------------
+--------------downstream sequence counts--------------
+------------------------------------------------------
+
+```{r}
+group_size_levels <- c("noAF", "AF_n4", "AF_n5", "AF_n10", "AF_n50", "AF_n100")
+```
+
+```{r}
+group_size_manifest <- tribble(
+  ~group_threshold_n, ~group_threshold_label, ~run_dir,
+
+  0, "noAF",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/no_af_samples/sp12_ont_noaf/",
+
+  4, "AF_n4",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_gsize/sp12_ont_sd17/n4_af5",
+
+  5, "AF_n5",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5",
+
+  10, "AF_n10",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_gsize/sp12_ont_sd17/n10_af5",
+
+  50, "AF_n50",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_gsize/sp12_ont_sd17/n50_af5",
+
+  100, "AF_n100",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af_benchmarks/af_gsize/sp12_ont_sd17/n100_af5") %>%
+  mutate(
+    group_threshold_label = factor(group_threshold_label, levels = group_size_levels),
+    run_dir = path.expand(run_dir),
+    downstream_summary = file.path(run_dir, "summary.tsv"),
+    ig_airr_table = file.path(run_dir, "airr", "ig_p_parse-select.tsv"),
+    tcr_airr_table = file.path(run_dir, "airr", "tr_p_parse-select.tsv"))
+```
+
+
+read in data
+```{r}
+group_size_counts <- group_size_manifest %>%
+  mutate(counts = pmap(list(downstream_summary, ig_airr_table, tcr_airr_table), read_run_counts)) %>%
+  unnest(counts) %>%
+  arrange(group_threshold_n)
+```
+
+```{r}
+group_size_long <- group_size_counts %>%
+  select(group_threshold_label, all_of(metric_levels)) %>%
+  pivot_longer(cols = all_of(metric_levels), names_to = "metric_raw", values_to = "value") %>%
+  mutate(metric = factor(metric_labels[metric_raw], levels = metric_labels[metric_levels]))
+```
+
+```{r}
+p_group_size_main <- group_size_long %>%
+  ggplot(aes(x = group_threshold_label, y = value, group = 1)) +
+  geom_line(linewidth = 0.55, na.rm = TRUE) +
+  geom_point(size = 1.6, na.rm = TRUE) +
+  facet_wrap(~ metric, scales = "free_y", nrow = 1) +
+  scale_y_continuous(labels = comma, breaks = breaks_pretty(n = 6), expand = expansion(mult = c(0.03, 0.06))) +
+  labs(x = "AF group size", y = "Sequence count") +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(angle = 35, hjust = 1),
+    strip.text.x = element_text(size = 4.5, face = "bold"),                   # text size in facet header (x)
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+```{r, fig.width=5, fig.height=2}
+p_group_size_main
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/")
+saveRDS(p_group_size_main, file.path(save_dir, "s3_c.rds"))
+```
+
+-----------------Review only---------------
+--------------------MSA runtime--------------
+--------------three large groups------------
+--------------------------------------------
+
+```{r}
+runtime_manifest <- tribble(
+  ~msa_backend, ~run_setting, ~slurm_log,
+
+  "abPOA", "default",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/msa_runtime/sp12_top3/v8_abpoa/slurm-3lar_abpoa_1734833.out",
+
+  "MAFFT-auto", "default",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/msa_runtime/sp12_top3/v8_mafft/slurm-3lar_mafft_1734836.out",
+
+  "MUSCLE3.8", "default",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/msa_runtime/sp12_top3/v8_muscle38/slurm-3lar_muscle38_1734837.out",
+
+  "MUSCLE5", "threads=1",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/msa_runtime/sp12_top3/v8_muscle5/slurm-3lar_muscle5_1734840.out",
+
+  "MUSCLE5", "multi-thread",
+  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/msa_runtime/sp12_top3/v8_muscle52/slurm-3lar_muscle52_1735048.out") %>%
+  mutate(msa_backend = factor(msa_backend, levels = c("abPOA", "MAFFT-auto", "MUSCLE3.8", "MUSCLE5")), slurm_log = path.expand(slurm_log))
+
+msa_cols <- c("MUSCLE3.8" = "#D95F02", "MAFFT-auto" = "#1B9E77", "abPOA" = "#2F5E8F", "MUSCLE5" = "gray40")
+```
+
+```{r}
+parse_slurm_runtime <- function(path) {
+  lines <- readLines(path, warn = FALSE)
+
+  input_ts <- str_match(
+    lines[str_detect(lines, "Input FASTA:")][1],
+    "^\\[([0-9-]+ [0-9:]+)\\]"
+  )[, 2]
+
+  done_ts <- str_match(
+    lines[str_detect(lines, "Done\\. Final output:")][1],
+    "^\\[([0-9-]+ [0-9:]+)\\]"
+  )[, 2]
+
+  input_ts <- as.POSIXct(input_ts, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  done_ts <- as.POSIXct(done_ts, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+
+  tibble(runtime_min = as.numeric(difftime(done_ts, input_ts, units = "mins")))
+}
+
+runtime_counts <- runtime_manifest %>%
+  mutate(runtime = map(slurm_log, parse_slurm_runtime)) %>%
+  unnest(runtime) %>%
+  mutate(
+    plot_label = case_when(
+      msa_backend == "MUSCLE5" & run_setting == "threads=1" ~ "MUSCLE5 (threads=1)",
+      msa_backend == "MUSCLE5" & run_setting == "multi-thread" ~ "MUSCLE5 (multi-thread)",
+      TRUE ~ as.character(msa_backend)
+    ),
+    plot_label = fct_reorder(plot_label, runtime_min),
+    runtime_text = paste0(round(runtime_min, 1), " min")
+  )
+```
+
+```{r}
+p_runtime_large_groups <- runtime_counts %>%
+  ggplot(aes(x = runtime_min, y = plot_label, color = msa_backend)) +
+  geom_segment(aes(x = 0.08, xend = runtime_min, y = plot_label, yend = plot_label), color = "grey75", linewidth = 0.4) +
+  geom_point(size = 1.6) +
+  geom_text(aes(label = runtime_text), hjust = 0.15, vjust = 1.8, size = 2.6, show.legend = FALSE) +
+  annotate("label", x = 10, y = 1.05, label = "MSA input:\n3 UMI-SPBC groups\n750, 750, 695 reads\n2,195 reads total",
+           hjust = 0, vjust = 0, size = 2.6, fill = "grey90", label.size = 0) +
+  scale_color_manual(values = msa_cols) +
+  scale_x_log10(breaks = c(0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000), labels = label_number(), limits = c(0.08, 1000), expand = expansion(mult = c(0, 0.04))) +
+  labs(x = "Runtime (minutes)", y = NULL, color = NULL) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.grid.major.y = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(angle = 35, hjust = 1),
+    legend.position = "none",
+    plot.margin = margin(t = 2, r = 2, b = 2, l = 2),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+```
+
+```{r, fig.width=4.5, fig.height=2}
+p_runtime_large_groups
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/")
+saveRDS(p_runtime_large_groups, file.path(save_dir, "msa_runtime.rds"))
+```
+
+```{r}
+sessionInfo()
+```

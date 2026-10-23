@@ -1,0 +1,436 @@
+---
+title: "longairr_q_length_2b_c_d"
+author: "Jonas Schuck"
+date: "2026-02-11"
+output: html_document
+---
+
+########################################
+#
+# Script contains analyses showing quality and length distributions
+# on raw input reads from Visium V1 ONT R9 and ONT R10 and PacBio HiFi datasets
+#
+# Results are shown in LongAIRR Figure 2b-d
+#
+#
+# Additionally we compute the length distribution of productive AIRR sequences
+# generated from the 3 datasets above 
+#
+# Results are shown in LongAIRR Figure 2f,g
+#
+#
+# **All results are saved as intermediate RDS objects and respectively used**
+# **in the corresponding figure assembly script longairr_p2.Rmd**
+#
+########################################
+
+
+```{r libraries, include=TRUE, message=FALSE}
+library(data.table)
+library(arrow)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(Biostrings)
+library(tidyverse)
+library(ggrastr)
+library(scales)
+```
+
+--------------------2_B_C_D-------------------
+-----Post-sequencing quality vs length scatter
+----------------------------------------------
+
+
+functions to process quality values from fastq file
+
+parquet format as intermediate to process large fastqs
+
+```{r}
+qread_from_qual <- function(qual_string, phred_offset = 33L) {
+  Qi <- utf8ToInt(qual_string) - phred_offset
+  p  <- 10^(-Qi / 10)
+  -10 * log10(mean(p))
+}
+
+#fastq to parquet
+fastq_to_parquet_parts <- function(fastq, out_dir, chunk_reads = 3e5) {
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  con <- if (grepl("\\.gz$", fastq, ignore.case = TRUE)) gzfile(fastq, "rt") else file(fastq, "rt")
+  on.exit(close(con), add = TRUE)
+
+  part <- 1L
+  lines_per_chunk <- as.integer(4L * chunk_reads)
+
+  repeat {
+    x <- readLines(con, n = lines_per_chunk)
+    if (length(x) == 0L) break
+
+    m <- (length(x) %/% 4L) * 4L
+    if (m == 0L) break
+    if (m < length(x)) x <- x[seq_len(m)]
+
+    seqs  <- x[seq(2L, m, by = 4L)]
+    quals <- x[seq(4L, m, by = 4L)]
+
+    dt <- data.table(
+      length = as.integer(nchar(seqs)),
+      mean_q = as.numeric(vapply(quals, qread_from_qual, numeric(1)))
+    )
+
+    # NanoPlot artefact removal
+    #dt <- dt[!(length < 20 & mean_q > 30)]
+
+    arrow::write_parquet(dt, file.path(out_dir, sprintf("part-%05d.parquet", part)))
+    part <- part + 1L
+  }
+  invisible(out_dir)
+}
+```
+
+```{r}
+plot_len_vs_q <- function(out_dir, sample_label,
+                          sample_n = 1e5, #number of points to plot
+                          x_max = 5200,   # xlimit
+                          y_max = 42,     # ylimit max
+                          y_min=0,        # ylimit min
+                          y_label = 0.85, # label position y
+                          show_y_title = TRUE, show_y_text = TRUE) {
+  # reading in parquet
+  qc_full <- open_dataset(out_dir, format = "parquet") %>%
+    select(length, mean_q) %>%
+    filter(!is.na(mean_q), length > 0) %>%
+    collect()
+
+  med_len <- median(qc_full$length)
+  med_q   <- median(qc_full$mean_q)
+
+  set.seed(1)
+  qc <- if (nrow(qc_full) > sample_n) {
+          dplyr::slice_sample(qc_full, n = sample_n)
+        } else {
+          qc_full
+        }
+
+  count_breaks <- c(1e2, 1e6)
+  count_labels <- scales::label_number(scale_cut = scales::cut_short_scale(), accuracy = 1)
+  
+  n_reads <- nrow(qc_full)
+  n_label <- scales::label_number(accuracy = 0.01, scale_cut=scales::cut_short_scale())(n_reads)
+  
+  label_text <- paste0(sample_label,"\nn = ", n_label, "\nMdn: ", round(med_len), " bp | Q", sprintf("%.1f", med_q))
+  #label_text <- paste0(sample_label, "\n",round(med_len), " bp\n","Q", sprintf("%.1f", med_q))
+
+  base_theme <- theme_bw(base_size = 7) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.25),
+      axis.title = element_text(size = 7),
+      axis.text  = element_text(size = 6),
+      plot.margin = margin(0, 0, 0, 0),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background  = element_rect(fill = "white", color = NA)
+    )
+
+  # central plot
+  p_main <- ggplot(qc, aes(length, mean_q)) +
+    geom_point_rast(alpha = 0.22, size = 0.26, color = "gray80") +
+    coord_cartesian(xlim = c(0, x_max), ylim = c(y_min, y_max), expand = FALSE) +
+    geom_vline(xintercept = med_len, linetype = "dashed", linewidth = 0.35) +
+    geom_hline(yintercept = med_q, linetype = "dashed", linewidth = 0.35) +
+    labs(x = "Read length (bp)", y = "Read quality (PHRED)") +
+    geom_label(data = data.frame(x = x_max * 0.70, y = y_max * y_label, label = label_text),
+      aes(x = x, y = y, label = label),
+      inherit.aes = FALSE, size = 2.5, fill = "white", label.size = 0.25, label.padding = unit(0.20, "lines")) +
+    scale_x_continuous(
+      limits = c(0, x_max), expand = expansion(mult = c(0, 0))) +
+    scale_y_continuous(limits = c(0, y_max), expand = expansion(mult = c(0, 0))) +
+    base_theme +
+    theme(
+      axis.title.y = element_text(size = 7),
+      axis.text.y  = element_text(size = 6),
+      axis.ticks.y = element_line(linewidth = 0.25),
+      plot.margin  = margin(0, 0, 0, 0),
+      panel.border = element_rect(linewidth = 0.2))
+
+  # top histo
+  p_top <- ggplot(qc_full, aes(length)) +
+    geom_histogram(binwidth = 50, fill = "gray85", color = NA) +
+    geom_vline(xintercept = med_len, linetype = "dashed", linewidth = 0.35) +
+    scale_x_continuous(limits = c(0, x_max), expand = expansion(mult = c(0, 0))) +
+    scale_y_continuous(trans = "log10", breaks = count_breaks, labels = count_labels, expand = expansion(mult = c(0, 0.02))) +
+    #labs(x = NULL, y = paste0("Count", "\n", "(log10)")) +
+    labs(x = NULL, y = NULL) +
+    base_theme +
+    theme(
+      axis.title.x = element_blank(),
+      axis.text.x  = element_blank(),
+      axis.ticks.x = element_blank(),
+      # axis.title.y = if (show_y_title) element_text(size = 6.5) else element_blank(),
+      # axis.text.y  = if (show_y_text) element_text(size = 5.5) else element_blank(),
+      # axis.ticks.y = if (show_y_text) element_line(linewidth = 0.25) else element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.margin  = margin(0, 0, -1, 0),
+      panel.border = element_rect(linewidth = 0.2))
+
+  # right histo
+  p_right <- ggplot(qc_full, aes(mean_q)) +
+  geom_histogram(binwidth = 1, fill = "gray85", color = NA) +
+  geom_vline(xintercept = med_q, linetype = "dashed", linewidth = 0.35) +
+  coord_flip(expand = FALSE) +
+  scale_x_continuous(limits = c(y_min, y_max), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(trans = "log10", breaks = count_breaks, labels = count_labels, expand = expansion(mult = c(0, 0.02))) +
+  #labs(x = "Count\n(log10)", y = NULL) +
+  labs(x = NULL, y = NULL) +
+  base_theme +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.x = element_text(size = 6.5),
+    axis.text.x  = element_text(size = 5.5, angle = 45, hjust = 1, vjust = 1),
+    axis.ticks.x = element_line(linewidth = 0.25),
+    plot.margin  = margin(0, 0, 0, -1),
+    panel.border = element_rect(linewidth = 0.2))
+
+  patchwork::wrap_plots(
+    p_top, plot_spacer(),
+    p_main, p_right,
+    nrow = 2,
+    widths = c(1, 0.15),
+    heights = c(0.15, 1)) &
+    theme(
+      plot.margin = margin(0, 0, 0, 0),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background  = element_rect(fill = "white", color = NA))
+}
+```
+
+
+#------------use functions
+
+sample names
+```{r}
+#----b,c,d
+q_length_pb <- "S1_PB"
+q_length_ont_v10 <- "S1_ONT"
+q_length_ont_v9 <- "ONT_R9"
+
+pq_dir <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel2/intermediates/qc_length/"
+save_dir <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel2/intermediates/"
+```
+
+B pacbio
+```{r, warning=FALSE, fig.width=3, fig.height=2}
+# B: S1_PB
+input_fastq <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/pacbio_17_af5_005/pacbio_s3_e52.fastq"
+out_dir <- file.path(pq_dir, "reads_qc_s1_pb_pq")
+
+fastq_to_parquet_parts(input_fastq, out_dir, chunk_reads = 3e5)
+
+fig_s1_pb <- plot_len_vs_q(out_dir, sample_label = q_length_pb, y_label = 0.5, y_min=10)
+
+fig_s1_pb <- fig_s1_pb + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+fig_s1_pb
+
+saveRDS(fig_s1_pb, file.path(save_dir, "p2b_s1_pb.rds"))
+```
+
+C ont v10
+```{r, warning=FALSE, fig.width=3, fig.height=2}
+# C: S1_ONT v10
+input_fastq <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/sp12_sd17_af5_005/basecalling/simplex_duplex.fastq"
+out_dir <- file.path(pq_dir, "reads_qc_s1_ont_pq")
+
+fastq_to_parquet_parts(input_fastq, out_dir, chunk_reads = 3e5)
+
+fig_s1_ont <- plot_len_vs_q(out_dir, sample_label = q_length_ont_v10, y_label = 0.8, y_min=0)
+
+fig_s1_ont <- fig_s1_ont + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+fig_s1_ont
+
+saveRDS(fig_s1_ont, file.path(save_dir, "p2c_s1_ont.rds"))
+```
+
+D ont public v9
+```{r, warning=FALSE, fig.width=3, fig.height=2}
+# D: public ONT_R9
+input_fastq <- "~/mnt_AG_Imkeller/group_members/schuck/immcantation_analysis/5_results/heiland/SRR_49/input/SRR25396849.fastq"
+out_dir <- file.path(pq_dir, "reads_qc_ont_r9_pq")
+
+fastq_to_parquet_parts(input_fastq, out_dir, chunk_reads = 3e5)
+
+fig_ont_r9 <- plot_len_vs_q(out_dir, sample_label = q_length_ont_v9, y_label = 0.8, y_min=0)
+
+fig_ont_r9 <- fig_ont_r9 + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+fig_ont_r9
+
+saveRDS(fig_ont_r9, file.path(save_dir, "p2d_ont_r9.rds"))
+```
+
+
+--------------------2_F_G-----------------
+-----AIRR_OUT Length distribution by chain
+------------------------------------------
+
+sample names / colors
+```{r}
+save_dir <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel2/intermediates/"
+
+s1_pb_q17 <- "S1_PB_Q17"
+s1_ont_q17 <- "S1_ONT_Q17"
+ont_r9_longairr <- "ONT_R9_longAIRR"
+
+bcr_cols <- c("IGH" = "#2f5e8fff", "IGK" = "#1b9e77ff", "IGL" = "#d95f02ff")
+tcr_cols <- c("TRA" = "#bf8630ff", "TRB" = "#000000ff")
+```
+
+
+```{r}
+theme_longairr_panel <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25),
+    axis.title = element_text(size = 7),
+    axis.text  = element_text(size = 6, color = "black"),
+    strip.text = element_text(size = 6.5, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    legend.position = "bottom",
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA))
+```
+
+
+determine sequence_id from airr table and retreive reads from fasta to get length
+```{r}
+lengths_with_locus <- function(constant_fasta, airr_tsv) {
+  airr <- data.table::fread(airr_tsv, sep = "\t", data.table = FALSE) %>%
+    transmute(sequence_id = as.character(sequence_id), locus = as.character(locus)) %>%
+    filter(!is.na(sequence_id), !is.na(locus)) %>%
+    distinct(sequence_id, locus)
+
+  dna <- Biostrings::readDNAStringSet(constant_fasta)
+  fasta_id <- sub("\\|.*$", "", names(dna))
+
+  idx <- fasta_id %in% airr$sequence_id
+
+  tibble(sequence_id = fasta_id[idx], length = as.integer(Biostrings::width(dna[idx]))) %>%
+    left_join(airr, by = "sequence_id") %>%
+    filter(!is.na(locus)) %>%
+    group_by(sequence_id) %>%
+    dplyr::slice(1) %>%
+    ungroup()
+}
+```
+
+
+# p2 F - AIRR_OUT length distribution (BCR)
+```{r, warning=FALSE, fig.height=3, fig.width=2.2}
+# s1_pb_bcr
+constant_fa <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/seqtag/Ig/combined_Ig.fasta"
+airr_tsv    <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/ig_p_parse-select.tsv"
+df_s1_pb_bcr <- lengths_with_locus(constant_fa, airr_tsv) %>%
+                            mutate(sample = s1_pb_q17)
+# s1_ont_bcr
+constant_fa <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/seqtag/Ig/combined_Ig.fasta"
+airr_tsv    <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv"
+df_s1_ont_bcr <- lengths_with_locus(constant_fa, airr_tsv) %>%
+                             mutate(sample = s1_ont_q17)
+
+df_combined_bcr <- bind_rows(df_s1_pb_bcr, df_s1_ont_bcr) %>%
+  mutate(sample = factor(sample, levels = c("S1_PB_Q17", "S1_ONT_Q17")),
+        locus  = factor(locus, levels = c("IGH","IGL","IGK")))
+```
+
+```{r, warning=FALSE, fig.height=3, fig.width=2.2}
+x_max <- 2500
+x_breaks <- c(750, 1000, 1250, 1500, 1750, 2000, 2250, 2500)
+
+p2_f_bcr <- ggplot(df_combined_bcr, aes(x = length, fill = locus, color = locus)) +
+  geom_density(alpha = 0.25, linewidth = 0.6) +
+  coord_cartesian(xlim = c(700, x_max), expand = FALSE) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_fill_manual(values = bcr_cols, drop = FALSE) +
+  scale_color_manual(values = bcr_cols, drop = FALSE) +
+  facet_wrap(~ sample, ncol = 1, scales = "free_y") +
+  labs(x = "Read length (bp)", y = "Density", fill = "   Ig\nchain", color = "   Ig\nchain") +
+  theme_longairr_panel +
+  theme(
+    axis.text.x = element_text(size = 6, angle = 45, hjust = 1, vjust = 1),
+    panel.border = element_rect(linewidth = 0.2),
+    strip.text = element_text(size = 6.5))
+ 
+p2_f_bcr <- p2_f_bcr + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+
+p2_f_bcr
+
+#saveRDS(p2_f_bcr, file.path(save_dir, "p2_f_bcr.rds"))
+```
+
+
+# p2 G - AIRR_OUT length distribution (TCR)
+```{r, warning=FALSE, fig.height=6, fig.width=4}
+# s1_pb_tcr
+constant_fa <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/seqtag/TCR/combined_TCR.fasta"
+airr_tsv    <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/tr_p_parse-select.tsv"
+df_s1_pb_tcr <- lengths_with_locus(constant_fa, airr_tsv) %>%
+                            mutate(sample = s1_pb_q17)
+
+constant_fa <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/seqtag/TCR/combined_TCR.fasta"
+airr_tsv    <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tr_p_parse-select.tsv"
+df_s1_ont_tcr <- lengths_with_locus(constant_fa, airr_tsv) %>%
+                             mutate(sample = s1_ont_q17)
+
+constant_fa <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/public_srr49/public_17_af5_005/seqtag/TCR/combined_TCR.fasta"
+airr_tsv    <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/public_srr49/public_17_af5_005/airr/tr_p_parse-select.tsv"
+df_ont_r9_tcr <- lengths_with_locus(constant_fa, airr_tsv) %>%
+                             mutate(sample = ont_r9_longairr)
+
+df_combined_tcr <- bind_rows(df_s1_pb_tcr, df_s1_ont_tcr, df_ont_r9_tcr) %>%
+  filter(locus %in% c("TRA", "TRB")) %>%
+  mutate(sample = factor(sample, levels = c("S1_PB_Q17", "S1_ONT_Q17", "ONT_R9_longAIRR")),
+         locus  = factor(locus, levels = c("TRA","TRB")))
+```
+
+
+```{r, warning=FALSE, fig.height=3, fig.width=2.2}
+x_max <- 2500
+x_breaks <- c(750, 1000, 1250, 1500, 1750, 2000, 2250, 2500)
+
+p2_g_tcr <- ggplot(df_combined_tcr, aes(x = length, fill = locus, color = locus)) +
+  geom_density(alpha = 0.25, linewidth = 0.6) +
+  coord_cartesian(xlim = c(700, x_max), expand = FALSE) +
+  scale_x_continuous(breaks = x_breaks) +
+  scale_fill_manual(values = tcr_cols, drop = FALSE) +
+  scale_color_manual(values = tcr_cols, drop = FALSE) +
+  facet_wrap(~ sample, ncol = 1, scales = "free_y") +
+  labs(x = "Read length (bp)", y = "Density", fill = "  Tcr\nchain", color = "  Tcr\nchain") +
+  theme_longairr_panel +
+  theme(
+    axis.text.x = element_text(size = 6, angle = 45, hjust = 1, vjust = 1),
+    panel.border = element_rect(linewidth = 0.2),
+    strip.text = element_text(size = 6.5)
+  )
+
+p2_g_tcr <- p2_g_tcr + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+
+p2_g_tcr
+
+saveRDS(p2_g_tcr, file.path(save_dir, "p2_g_tcr.rds"))
+```
+
+p2 g + f
+```{r, warning=FALSE}
+# grid
+# p2_h_i_aligned <- plot_grid(p2_f_bcr, p2_g_tcr, labels = c("H", "I"), label_size = 20, ncol = 2)
+# saveRDS(p2_h_i_aligned, file.path(save_dir, "p2_f_g_grid.rds"))
+```
+
+```{r}
+sessionInfo()
+```

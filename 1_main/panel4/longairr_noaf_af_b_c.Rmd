@@ -1,0 +1,368 @@
+---
+title: "longairr_p2_b_c"
+author: "Jonas Schuck"
+date: "2026-02-12"
+output: html_document
+---
+
+########################################
+#
+# Script contains several analyses regarding the impact of adaptive filtering
+# on the number of final productive AIRR sequences across datasets
+#
+# Read-length distribution for a representative UMI-SPBC group (S3_ONT_Q17) showcasing
+# peak detection during adaptive filtering
+#
+# Comparison of number of productive AIRR sequences across multiple datasets
+# when processed with LongAIRR and adaptive filtering vs no adaptive filtering 
+#
+# Results are shown in LongAIRR Fig. 4b, 4c
+#
+########################################
+
+
+```{r libraries, include=TRUE, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+library(patchwork)
+library(cowplot)
+library(BiocGenerics)
+library(stringr)
+```
+
+--------------------4_B-------------------
+-----Adaptive filtering example group
+------------------------------------------
+
+function to read in fasta file and determine read-lengths
+```{r}
+read_fasta_lengths <- function(fasta_path) {
+  # Supports .fa/.fasta and .gz
+  dna <- Biostrings::readDNAStringSet(fasta_path)
+  tibble(read_id = names(dna),
+         length  = as.integer(width(dna)))
+}
+```
+
+generate group-specific fasta from intermediate files
+```{r}
+#reproducibility command
+#group extracted from 'longairr_barcode_trimmed.fasta'
+
+#cd ~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/collapse/tmp/2_filt_group_sub_cons
+
+#awk -v umi="UMI=ATTATATCCAAG" -v spbc="SPBC=CAGTCTGTATACTGGG" '
+#BEGIN { RS=">"; ORS="" }
+#NR > 1 && $0 ~ umi && $0 ~ spbc { print ">" $0 }
+#' longairr_barcode_trimmed.fasta > CAGTCTGTATACTGGGATTATATCCAAG_trimmed.fasta
+
+```
+
+
+```{r, fig.width=6}
+#SPBCUMI=CAGTCTGTATACTGGGATTATATCCAAG (sp8) extracted from longairr_barcode_trimmed || SPBC=CAGTCTGTATACTGGG, UMI=ATTATATCCAAG
+fasta_path <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp8_sd17_af5/collapse/tmp/2_filt_group_sub_cons/CAGTCTGTATACTGGGATTATATCCAAG_trimmed.fasta"
+df_len_g1 <- read_fasta_lengths(fasta_path)
+
+x_breaks <- c(500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750)
+```
+
+size distribution figure
+```{r}
+# range and size info determine from collapse.log as output from LongAIRR collapse
+df_len_g1 <- df_len_g1 %>%
+  mutate(keep = if_else(length >= 1568 & length <= 1732, "keep", "discard"))
+
+my_breaks <- seq(floor(min(df_len_g1$length, na.rm = TRUE)), ceiling(max(df_len_g1$length, na.rm = TRUE)), by = 10)
+
+p4_b <- ggplot(df_len_g1, aes(x = length)) +
+  geom_histogram(aes(fill = keep), breaks=my_breaks, color = NA) +
+  scale_fill_manual(values = c("keep" = "#6aa84f", "discard" = "#cc0000")) +
+  scale_x_continuous(breaks = x_breaks, labels = x_breaks) +
+  geom_vline(xintercept = 1568, linetype = "dotdash", linewidth = 0.6, color = "black") +
+  geom_vline(xintercept = 1732, linetype = "dotdash", linewidth = 0.6, color = "black") +
+  labs(x = "Read length (nt)", y = "Number of reads (log1p)", fill = NULL) +
+  geom_label(
+    data = data.frame(x = 2000, log_reads = 50),
+    aes(x = x, y = log_reads, label = paste0("Original size: 3743 reads\n", "Keep range: 1568-1732 bp\n", "Retained: 3404 reads")),
+    size = 2.5, hjust = 0, fill = "gray91", label.size = 0, label.padding = unit(0.10, "lines"), inherit.aes = FALSE) +
+  scale_y_continuous(transform = "log1p",
+    breaks = c(1, 10, 50, 100, 300, 1000, 3000),
+    labels = c("1", "10", "50", "100", "300", "1000", "3000")) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text = element_text(size = 6, color = "black"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)) +
+  guides(fill = "none")
+
+```
+
+```{r,fig.width=3, fig.height=1.5}
+p4_b <- p4_b + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+p4_b
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/")
+saveRDS(p4_b, file.path(save_dir, "p4_b.rds"))
+```
+
+
+--------------------4_C-------------------
+----------------noAF vs AF
+------------------------------------------
+
+list all samples and the directories of matching af / no_af files
+```{r}
+parent_af   <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/"
+parent_noaf <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/no_af_samples/"
+
+samples <- tribble(
+  ~sample,       ~af_dir,                 ~noaf_dir,
+  "S1_PB_Q17",   "sp12_pb",               "sp12_pb_noaf",
+  "S1_ONT_Q17",  "sp12_ont_sd17_af5",     "sp12_ont_noaf",
+  "S2_ONT_Q17",  "sp7_sd17_af5",          "sp7_noaf",
+  "S3_ONT_Q17",  "sp8_sd17_af5",          "sp8_noaf",
+  "S4_ONT_Q17_HD",  "sp21_hd_sd17_af5/post_whitelist_run",  "sp21hd_noaf"
+)
+
+paths <- samples %>%
+  pivot_longer(cols = c(af_dir, noaf_dir), names_to = "cond", values_to = "dir") %>%
+  mutate(condition = if_else(cond == "noaf_dir", "noAF", "AF"),
+         ig = file.path(if_else(cond == "noaf_dir", parent_noaf, parent_af), dir, "airr/ig_p_parse-select.tsv"),
+         tr = file.path(if_else(cond == "noaf_dir", parent_noaf, parent_af), dir, "airr/tr_p_parse-select.tsv")) %>%
+  select(sample, condition, ig, tr)
+
+sample_cols <- c("S1_PB_Q17"  = "#D62728", "S1_ONT_Q17" = "#1F77B4", "S2_ONT_Q17" = "#2CA02C", "S3_ONT_Q17" = "#9467BD", "S4_ONT_Q17_HD" = "orange")
+```
+
+data read in
+```{r}
+#read_airr <- function(path) readr::read_tsv(path, show_col_types = FALSE)
+# filtering is new
+read_airr <- function(sample_dir){
+  df <- read.table(sample_dir, sep = '\t', header = TRUE, fill = TRUE)
+  df <- df %>%
+       mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+              start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+       filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction)) %>%
+       filter(!grepl("N", v_region_sequence)) %>%
+       select(-any_of("prcount")) %>%
+  return(df)
+}
+
+airr_all <- paths %>%
+  rowwise() %>%
+  mutate(df = list(bind_rows(read_airr(ig), read_airr(tr)))) %>%
+  ungroup() %>%
+  select(sample, condition, df) %>%
+  unnest(df)
+```
+
+
+data processing and label generation
+```{r}
+df_counts <- airr_all %>%
+  group_by(sample, condition) %>%
+  summarise(Total = n(), `N_ORIG > 4` = sum(n_orig >= 5, na.rm = TRUE), .groups = "drop")
+
+# add percent metrics
+df_pct <- df_counts %>%
+  pivot_longer(cols = c(Total, `N_ORIG > 4`), names_to = "metric", values_to = "n") %>%
+  pivot_wider(names_from = condition, values_from = n) %>%
+  mutate(pct_change = (AF - noAF) / noAF * 100) %>%
+  pivot_longer(cols = c(noAF, AF), names_to = "condition", values_to = "tmp") %>%
+  mutate(value = if_else(condition == "noAF", 0, pct_change),
+         condition = factor(condition, levels = c("noAF", "AF")),
+         metric = factor(metric, levels = c("Total", "N_ORIG > 4")))
+```
+
+```{r}
+# absolute number labels
+df_abs_labels <- df_counts %>%
+  pivot_longer(cols = c(Total, `N_ORIG > 4`), names_to = "metric", values_to = "n") %>%
+  pivot_wider(names_from = condition, values_from = n) %>%
+  mutate(metric = factor(metric, levels = c("Total", "N_ORIG > 4")),
+        label  = paste0("noAF ", format(noAF, big.mark = ","), " \u2192 AF ", format(AF, big.mark = ","))) %>%
+  left_join(df_pct %>% filter(condition == "AF") %>% select(sample, metric, value), by = c("sample", "metric"))
+
+# label positions
+df_abs_labels_pos <- df_abs_labels %>%
+  arrange(metric, sample) %>%
+  group_by(metric) %>%
+  mutate(x_seg_start = 0.4,
+         x_seg_end   = 0.43,
+         x_text      = 0.445,
+         y_top       = max(value, na.rm = TRUE),
+         y_label     = seq(y_top[1] * 0.92, y_top[1] * 0.72,          length.out = n())) %>%
+  ungroup() %>%
+  select(-y_top)
+```
+
+define shared figure theme
+```{r}
+theme_panel4c <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text  = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    strip.text   = element_text(size = 6.5, color = "black"),
+    plot.margin  = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA)
+  )
+```
+
+TOTAL figure (left)
+```{r}
+# TOTAL
+df_total <- df_pct %>% filter(metric == "Total")
+
+p_c_total <- ggplot(df_total, aes(x = condition, y = value, group = sample, color = sample)) +
+  geom_hline(yintercept = 0, linewidth = 0.25, color = "grey60") +
+  geom_line(position = position_dodge(width = 0.3), linewidth = 0.7) +
+  geom_point(position = position_dodge(width = 0.3), size = 1.7) +
+  scale_color_manual(values = sample_cols) +
+  scale_y_continuous(breaks = seq(0, 2, by = 0.2)) +
+  labs(x = NULL, y = "Relative change of prod. AIRR (%)") +
+  annotate("label", x = -Inf, y = Inf, label = "TOTAL",
+    hjust = -0.05, vjust = 1.15, label.size = 0, fill = "grey92", size = 2) +
+  coord_cartesian(clip = "off") +
+  geom_segment(data = df_abs_labels_pos %>% filter(metric == "Total"),
+    aes(x = x_seg_start, xend = x_seg_end, y = y_label, yend = y_label, color = sample),
+    inherit.aes = FALSE, linewidth = 0.7, show.legend = FALSE) +
+  geom_text(data = df_abs_labels_pos %>% filter(metric == "Total"),
+    aes(x = x_text, y = y_label, label = label),inherit.aes = FALSE, hjust = 0, size = 1.6,
+    color = "black", show.legend = FALSE) +
+  guides(color = guide_legend(title = "Sample")) +
+  theme_panel4c +
+  theme(legend.position = "bottom")
+```
+
+N_ORIG > 4 figure (right)
+```{r}
+# N_ORIG > 4
+df_consensus <- df_pct %>% filter(metric == "N_ORIG > 4")
+
+p_c_cons <- ggplot(df_consensus, aes(x = condition, y = value, group = sample, color = sample)) +
+  geom_hline(yintercept = 0, linewidth = 0.25, color = "grey60") +
+  geom_line(position = position_dodge(width = 0.3), linewidth = 0.7) +
+  geom_point(position = position_dodge(width = 0.3), size = 1.7) +
+  scale_color_manual(values = sample_cols) +
+  scale_y_continuous(breaks = seq(0, 30, by = 2)) +
+  labs(x = NULL, y = "Relative change of prod. AIRR (%)") +
+  annotate("label", x = -Inf, y = Inf, label = "ORIGIN GROUP SIZE > 4",
+    hjust = -0.05, vjust = 1.15, label.size = 0, fill = "grey92", size = 2) +
+  coord_cartesian(clip = "off") +
+  geom_segment(data = df_abs_labels_pos %>% filter(metric == "N_ORIG > 4"),
+    aes(x = x_seg_start, xend = x_seg_end, y = y_label, yend = y_label, color = sample),
+    inherit.aes = FALSE, linewidth = 0.7, show.legend = FALSE) +
+  geom_text(data = df_abs_labels_pos %>% filter(metric == "N_ORIG > 4"),
+    aes(x = x_text, y = y_label, label = label), inherit.aes = FALSE,
+    hjust = 0, size = 1.6, color = "black", show.legend = FALSE) +
+  guides(color = guide_legend(title = "Sample")) +
+  theme_panel4c +
+  theme(legend.position = "bottom")
+```
+
+combined figure
+```{r}
+# combined panel with patchwork
+p_total_cons <- (p_c_total + p_c_cons) +
+  plot_layout(guides = "collect", widths = c(1,0.90)) &
+  theme(
+    legend.position = "bottom",
+    legend.key.width = unit(0.45, "cm"),
+    legend.key.height = unit(0.25, "cm"),
+    legend.text = element_text(size = 6, color = "black"),
+    plot.margin = margin(l=2, 0, 0, 0),
+    legend.box.margin = margin(t = -10, b = 0)) &
+  guides(color = guide_legend(nrow = 2, byrow = TRUE, title="Sample"))
+
+p4_c <- plot_grid(p_total_cons)
+```
+
+```{r, fig.width=3.5, fig.height=2.5}
+p4_c <- p4_c + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+p4_c
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/")
+saveRDS(p4_c, file.path(save_dir, "p4_c.rds"))
+```
+
+
+```{r}
+# save_dir <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/panel4/"
+# cowplot::save_plot(file.path(save_dir, "af_noaf.png"), p4_c, base_width = 7.5, base_height=4.5)
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+--------------------------------------
+--------------------------------------
+#ESSB talk backup
+
+
+```{r}
+##changed sizes for presentation
+# p4_b <- ggplot(df_len_g1, aes(x = length)) +
+#   geom_histogram(aes(fill = keep), breaks=my_breaks, color = NA) +
+#   scale_fill_manual(values = c("keep" = "#6aa84f", "discard" = "#cc0000")) +
+#   scale_x_continuous(breaks = x_breaks, labels = x_breaks) +
+#   geom_vline(xintercept = 1568, linetype = "dotdash", linewidth = 0.6, color = "black") +
+#   geom_vline(xintercept = 1732, linetype = "dotdash", linewidth = 0.6, color = "black") +
+#   labs(x = "Read length (nt)", y = "Number of reads (log1p)", fill = NULL) +
+#   geom_label(
+#     data = data.frame(x = 2000, log_reads = 50),
+#     aes(x = x, y = log_reads, label = paste0("Original size: 3743 reads\n", "Keep range: 1568-1732 bp\n", "Retained: 3404 reads")),
+#     size = 4.5, hjust = 0, fill = "gray91", label.size = 0, label.padding = unit(0.10, "lines"), inherit.aes = FALSE) +
+#   scale_y_continuous(transform = "log1p",
+#     breaks = c(1, 10, 50, 100, 300, 1000, 3000),
+#     labels = c("1", "10", "50", "100", "300", "1000", "3000")) +
+#   theme_bw(base_size = 12) +
+#   theme(
+#     panel.grid.minor = element_blank(),
+#     panel.grid.major = element_line(linewidth = 0.25),
+#     panel.border = element_rect(linewidth = 0.2),
+#     axis.title = element_text(size = 12, color = "black"),
+#     axis.text = element_text(size = 12, color = "black"),
+#     plot.margin = margin(0, 0, 0, 0),
+#     panel.background = element_rect(fill = "white", color = NA),
+#     plot.background = element_rect(fill = "white", color = NA)) +
+#   guides(fill = "none")
+```
+
+#talk sizes
+```{r,fig.width=6, fig.height=3.5}
+# p4_b <- p4_b + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+# p4_b
+# ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/af_scheme_talk.png", plot=p4_b,width = 6, height = 3.5)
+```
+
+
+
+
+
+

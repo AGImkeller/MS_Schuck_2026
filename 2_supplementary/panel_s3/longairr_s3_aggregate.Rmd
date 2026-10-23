@@ -1,0 +1,130 @@
+---
+title: "nanoairr_subsampling_aggregate"
+author: "Jonas Schuck"
+date: "2025-09-04"
+output: html_document
+---
+
+########################################
+#
+# Script aggregates subsampling results from G1-G4 (samples S2_ONT_Q17 and S3_ONT_Q17)
+# into one unified figure.
+# Replicates are collapsed into one dot capturing the median
+#
+########################################
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+```
+
+--------------------S3_E-------------------
+-----Aggregated subsampling for G1-G4 (S2_ONT_Q17, S3_ONT_Q17)
+------------------------------------------
+
+```{r}
+dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/s3_g1_g2_g3_g4_d/")
+
+g1 <- readRDS(file.path(dir, "g1.RDS"))
+g2 <- readRDS(file.path(dir, "g2.RDS"))
+g3 <- readRDS(file.path(dir, "g3.RDS"))
+g4 <- readRDS(file.path(dir, "g4.RDS"))
+```
+
+```{r}
+dfs <- list(g1, g2, g3, g4)
+
+agg_list <- list()
+agg_list <- lapply(dfs, function(df) {
+  df %>%
+    filter(metric == "similarity_percent") %>%
+    group_by(sample, n_numeric) %>%
+    summarise(identity = median(value), .groups = "drop")
+})
+
+agg_combined <- bind_rows(agg_list)
+```
+
+
+```{r}
+theme_subsample <- theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text  = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black", angle = 45, hjust = 1, vjust = 1),
+    axis.text.y = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text  = element_text(size = 6, color = "black"),
+    strip.text   = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "grey90", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA)
+  )
+```
+
+
+```{r}
+agg_combined$n_ordered <- factor(agg_combined$n_numeric,
+                                    levels = c(1, 2, 3, 4, 5, 10, 50, 100, 250, 500, 750, 1000, 10000),
+                                    labels = c("1", "2", "3", "4", "5", "10", "50", "100", "250", "500", 
+                                               "750", "1000", "all reads"))
+
+cons_combined_main <- ggplot(agg_combined, aes(x = n_ordered, y = identity)) +
+  geom_jitter(width=0.25, size = 1.8, alpha = 0.85, shape = 20, height = 0, aes(color=sample)) +
+  scale_color_manual(values=c("#D62728", "#1F77B4", "#2CA02C", "#9467BD")) +
+  #coord_cartesian(ylim = c(NA, 100)) +
+  scale_y_continuous(breaks = function(x) seq(floor(min(x)), ceiling(max(x)), by = 0.2)) +
+  labs(x = "Number of reads", y = "Consensus identity (%)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_subsample +
+  guides(color = "none")
+  
+cons_combined_main
+```
+
+```{r}
+# --- mini in-plot legend 
+legend_df_large <- tibble::tibble(
+  x_sq   = 250,                         # x for the colored square
+  x_lab  = 250,                         # x for the label box (to the right)
+  y      = c(99.1, 98.97, 98.84, 98.71),              # y positions in your proportion scale
+  fill   = c("#D62728", "#1F77B4", "#2CA02C", "#9467BD"),
+  label  = c(paste0("  S2_ONT_Q17 | G1"), paste0("  S2_ONT_Q17 | G2"), paste0("  S3_ONT_Q17 | G3"), paste0("  S3_ONT_Q17 | G4"))
+)
+
+legend_df_large$x_sq <- factor(as.character(legend_df_large$x_sq),levels = levels(agg_combined$n_ordered) )
+
+legend_df_large$x_lab <- factor(as.character(legend_df_large$x_lab), levels = levels(agg_combined$n_ordered))
+
+# colored circles
+s3_e <- cons_combined_main +
+  # remove scale_colour_identity()
+  geom_label(data = legend_df_large, aes(x = x_lab, y = y, label = label),
+    hjust = 0, size = 1.5, fill = "gray91", colour = "black", label.size = 0, label.r = unit(0.2, "lines"),
+    label.padding = unit(0.15, "lines"), show.legend = TRUE, inherit.aes = FALSE, parse = FALSE) +
+  geom_point(data = legend_df_large, aes(x = x_sq, y = y), colour = legend_df_large$fill,  # literal colors
+    shape = 20, size = 1.5, show.legend = FALSE, inherit.aes = FALSE) 
+
+```
+
+```{r, fig.height=2, fig.width=3.2}
+set.seed(30)
+s3_e <- s3_e + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5))) 
+s3_e
+```
+save the intermediate
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp3/intermediates/")
+saveRDS(s3_e, file=file.path(save_dir, "s3_e.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+

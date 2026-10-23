@@ -1,0 +1,183 @@
+---
+title: "LongAIRR spatial–bulk IGH clone comparison"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains the clone overlap between matching spAIRR (S1_ONT_Q17)
+# and corresponding bulk-BCR dataset
+#
+# Joint clone annotation into scatter figure shown in pbpr response
+#
+########################################
+
+Comparison of jointly assigned IGH clones in matched spatial and bulk libraries.
+Counts represent retained molecular groups, not reads or cells. Spatial counts
+use UMI–SPBC groups; bulk counts use UMIs, following the original analysis.
+All spatial barcodes are included: this is a whole-library comparison.
+
+```{r settings}
+library(tidyverse)
+library(scoper)
+library(ggrepel)
+
+SPATIAL_BCR_AIRR_PATH <- "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv"
+BULK_BCR_AIRR_PATH <- "~/mnt_AG_Imkeller/group_members/schuck/immcantation_analysis/2_results_3.2/r15/simplex_duplex/sample_demux/UID14/airr/ig_p_parse-select.tsv"
+
+MIN_CONSENSUS_COUNT <- 2L # At least two supporting reads; set to 3L for consensus_count > 2
+CLONE_THRESHOLD <- 0.15
+NPROC <- 8
+LABEL_SHARED_CLONES <- 8
+BULK_MOLECULE_COLUMN <- "umi" # Retained from the original bulk comparison
+
+# Match the constant-region categories retained in the Figure 6 analysis.
+IGH_CONSTANT_GENES <- c("IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHM")
+CLONE_COLORS <- c("Shared" = "#4C78A8", "spAIRR only" = "#F58518", "Bulk only" = "#54A24B")
+```
+
+
+Read productive AIRR tables and apply the same downstream QC to both libraries
+
+```{r read-and-filter}
+read_igh <- function(path, dataset_name, molecule_column, constant_column, constant_genes) {
+  read_tsv(path.expand(path), show_col_types = FALSE, col_types = cols(.default = col_character())) %>%
+    select(-any_of(c("x", "y"))) %>%
+    mutate(dataset = dataset_name, molecule_id = .data[[molecule_column]],
+           sequence_id = paste(dataset_name, sequence_id, sep = "|"),
+           consensus_count = as.integer(consensus_count),
+           junction_length = as.integer(junction_length),
+           umi = toupper(umi), junction = toupper(junction),
+           constant_annotation = str_remove(.data[[constant_column]], "\\*.*$"),
+           v_region_sequence = str_sub(toupper(sequence),
+             start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+    filter(locus == "IGH", productive %in% c("T", "TRUE", "True", "true", "1"),
+           !is.na(molecule_id), molecule_id != "",
+           !is.na(constant_annotation), str_sub(constant_annotation, 1, 3) == locus,
+           constant_annotation %in% constant_genes,
+           !is.na(umi), umi != "", !str_detect(umi, "TTTTTTTTTTT"),
+           !is.na(junction), junction != "", !str_detect(junction, "N"),
+           !is.na(v_region_sequence), v_region_sequence != "", !str_detect(v_region_sequence, "N"),
+           consensus_count >= MIN_CONSENSUS_COUNT)
+}
+
+spatial_igh <- read_igh(SPATIAL_BCR_AIRR_PATH, "spAIRR", "group",
+                        "c_call", IGH_CONSTANT_GENES)
+
+bulk_igh <- read_igh(BULK_BCR_AIRR_PATH, "Bulk", BULK_MOLECULE_COLUMN,
+                     "isotype", c("IGHA", "IGHG", "IGHM"))
+
+
+igh_combined <- bind_rows(spatial_igh, bulk_igh) %>%
+  arrange(v_call, j_call, junction_length, junction, dataset, molecule_id)
+```
+
+Assign clones jointly, threshold 0.15
+
+```{r joint-clones}
+igh_joint_clones <- scoper::hierarchicalClones(igh_combined,
+  method = "nt", linkage = "single", normalize = "len", first = FALSE,
+  threshold = CLONE_THRESHOLD, verbose = FALSE, nproc = NPROC) %>%
+  mutate(clone_id_joint = as.character(clone_id))
+```
+
+Count distinct molecular identifiers within each dataset and jointly assigned clone
+
+```{r clone-counts}
+clone_counts <- igh_joint_clones %>%
+  distinct(dataset, clone_id_joint, molecule_id) %>%
+  count(dataset, clone_id_joint, name = "n_molecules") %>%
+  pivot_wider(names_from = dataset, values_from = n_molecules,
+              values_fill = 0, names_prefix = "n_molecules_") %>%
+  mutate(shared_clone = n_molecules_spAIRR > 0 & n_molecules_Bulk > 0,
+         clone_status = case_when(shared_clone ~ "Shared",
+                                  n_molecules_spAIRR > 0 ~ "spAIRR only",
+                                  TRUE ~ "Bulk only"),
+         clone_status = factor(clone_status, levels = names(CLONE_COLORS)),
+         total_molecules = n_molecules_spAIRR + n_molecules_Bulk)
+
+clone_overlap_summary <- clone_counts %>%
+  summarise(n_spatial_clones = sum(n_molecules_spAIRR > 0),
+            n_bulk_clones = sum(n_molecules_Bulk > 0),
+            n_shared_clones = sum(shared_clone), n_union_clones = n()) %>%
+  mutate(fraction_spatial_clones_shared = n_shared_clones / n_spatial_clones,
+         fraction_bulk_clones_shared = n_shared_clones / n_bulk_clones)
+
+shared_molecule_summary <- clone_counts %>%
+  select(shared_clone, n_molecules_spAIRR, n_molecules_Bulk) %>%
+  pivot_longer(cols = starts_with("n_molecules_"), names_to = "dataset",
+               names_prefix = "n_molecules_", values_to = "n_molecules") %>%
+  group_by(dataset) %>%
+  summarise(molecules_in_shared_clones = sum(n_molecules[shared_clone]),
+            n_molecules = sum(n_molecules), .groups = "drop") %>%
+  mutate(fraction_molecules_in_shared_clones = molecules_in_shared_clones / n_molecules)
+
+clone_overlap_summary
+shared_molecule_summary
+```
+
+Each point represents a joint clone. Point area encodes the combined molecular
+count
+
+```{r scatter, fig.width=5, fig.height=4}
+shared_labels <- clone_counts %>%
+  filter(shared_clone) %>%
+  arrange(desc(total_molecules), clone_id_joint) %>%
+  slice_head(n = LABEL_SHARED_CLONES)
+
+axis_counts <- c(0, 1, 10, 100, 1000, 10000, 100000)
+
+p_spatial_bulk_clone_abundance <- ggplot(clone_counts,
+  aes(x = n_molecules_spAIRR + 1, y = n_molecules_Bulk + 1)) +
+  geom_point(aes(fill = clone_status, size = total_molecules),
+             shape = 21, color = "grey20", stroke = 0.25, alpha = 0.8) +
+  #geom_text_repel(data = shared_labels, aes(label = clone_id_joint),
+  #                size = 2, max.overlaps = Inf, seed = 1) +
+  scale_x_log10(breaks = axis_counts + 1, labels = scales::comma(axis_counts)) +
+  scale_y_log10(breaks = axis_counts + 1, labels = scales::comma(axis_counts)) +
+  scale_fill_manual(values = CLONE_COLORS, drop = FALSE) +
+  scale_size_area(max_size = 7) +
+  labs(x = "spAIRR IGH molecules per clone", y = "Bulk IGH molecules per clone",
+       fill = "Clone overlap", size = "Combined\nmolecules") +
+  theme_bw(base_size = 7) +
+  guides(size = guide_legend(order = 1), fill = guide_legend(order = 2)) +
+  theme(aspect.ratio = 1,
+    panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+        panel.border = element_rect(linewidth = 0.3),
+        axis.text = element_text(size = 6, color = "black"),
+        axis.title = element_text(size = 7, color = "black"),
+        legend.title = element_text(size = 6.5), legend.text = element_text(size = 6),
+        plot.caption = element_text(size = 6, hjust = 0),
+        plot.margin = margin(2, 2, 2, 2))
+
+#p_spatial_bulk_clone_abundance
+```
+
+
+```{r, fig.height=3.5, fig.width=5}
+p_spatial_bulk_clone_abundance
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/")
+saveRDS(p_spatial_bulk_clone_abundance, file = file.path(save_dir, "spAIRR_bulk_overlap_matching.rds"))
+```
+
+validion check
+```{r}
+clone_counts %>%
+  mutate(rank_spatial = min_rank(desc(n_molecules_spAIRR)),
+         rank_bulk = min_rank(desc(n_molecules_Bulk))) %>%
+  arrange(desc(total_molecules)) %>%
+  select(clone_id_joint, n_molecules_spAIRR, n_molecules_Bulk,
+         rank_spatial, rank_bulk) %>%
+  slice_head(n = 10)
+```
+
+```{r}
+sessionInfo()
+```
+

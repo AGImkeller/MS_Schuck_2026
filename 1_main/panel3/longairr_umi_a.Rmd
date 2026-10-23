@@ -1,0 +1,206 @@
+---
+title: "longairr_umi_hamming_3a"
+author: "Jonas Schuck"
+date: "2026-02-12"
+output: html_document
+---
+
+########################################
+#
+# Script contains analysis regarding the size distribution of UMI-SPBC groups
+# per captured chain (IgH, IgK, IgL, TRA, TRB) to compare the technical
+# replicated datasets S1_ONT_Q17 and S1_PB_Q17
+#
+# Results are shown in LongAIRR Fig. 3a
+#
+########################################
+
+
+```{r}
+library(scales)
+library(ggplot2)
+library(cowplot)
+library(stringr)
+```
+
+--------------------3_a--------------
+--------------UMI knee plots
+-------------------------------------
+
+```{r}
+dir_2459_sd17_b <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv")
+dir_2459_sd17_t <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tr_p_parse-select.tsv")
+
+dir_2459_pb_b <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/ig_p_parse-select.tsv")
+dir_2459_pb_t <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_pb/airr/tr_p_parse-select.tsv")
+```
+
+```{r}
+chain_cols <- c("IGH" = "#2f5e8fff", "IGK" = "#1b9e77ff", "IGL" = "#d95f02ff", "TRA" = "#bf8630ff", "TRB" = "#000000ff")
+```
+
+```{r}
+# read in and filter
+readAirr <- function(sample_dir){
+  df <- read.table(sample_dir, sep = '\t', header = TRUE, fill = TRUE)
+  
+  df <- df %>%
+       dplyr::mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+                    start = as.integer(v_sequence_start),
+                    end = as.integer(v_sequence_end))) %>%
+       filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction) & !grepl("N", v_region_sequence)) %>%
+       #filter(!grepl("N", v_region_sequence)) %>%
+  return(df)
+}
+
+bcrs_list <- list("S1_ONT_Q17_BCR"=dir_2459_sd17_b, "S1_PB_Q17_BCR"=dir_2459_pb_b)
+tcrs_list <- list("S1_ONT_Q17_TCR"=dir_2459_sd17_t, "S1_PB_Q17_TCR"=dir_2459_pb_t)
+
+# combined bcrs
+bcrs_sp <- lapply(bcrs_list, function(file_path) {
+  list(airr_df = readAirr(file_path))
+  })
+
+#combined tcrs
+tcrs_sp <- lapply(tcrs_list, function(file_path) {
+  list(airr_df = readAirr(file_path))
+  })
+```
+
+```{r}
+#combined all
+bt_sp <- list(S1_ONT_Q17 = list(airr_df = bind_rows(bcrs_sp$S1_ONT_Q17_BCR$airr_df, tcrs_sp$S1_ONT_Q17_TCR$airr_df)),
+              S1_PB_Q17  = list(airr_df = bind_rows(bcrs_sp$S1_PB_Q17_BCR$airr_df,  tcrs_sp$S1_PB_Q17_TCR$airr_df)))
+```
+
+#Figure generation
+
+figure function
+```{r}
+plot_knee <- function(df_airr, sample_label, chain_cols) {
+
+  keep_loci <- c("IGH","IGK","IGL","TRA","TRB")
+
+  df <- as_tibble(df_airr) %>%
+    filter(consensus_count > 0, locus %in% keep_loci) %>%
+    transmute(locus  = as.character(locus), group  = as.character(group), n_orig = as.numeric(n_orig)) %>%
+    filter(!is.na(group), !is.na(n_orig))
+
+  knee <- df %>%
+    group_by(locus, group) %>%
+    summarise(value = sum(n_orig), .groups = "drop") %>%
+    group_by(locus) %>%
+    arrange(desc(value), .by_group = TRUE) %>%
+    mutate(rank = row_number(), n_rank = n()) %>%
+    ungroup() %>%
+    mutate(pct = if_else(n_rank > 1, (rank - 1) / (n_rank - 1), 0))
+
+  # number labels
+  counts <- df %>%
+    distinct(locus, group) %>%
+    dplyr::count(locus, name = "n_groups") %>%
+    mutate(locus = factor(locus, levels = keep_loci),
+           label = paste0(as.character(locus), ": ", scales::comma(n_groups)))
+
+  # anchor position in the right half of the figure
+  label_df <- knee %>%
+    filter(pct >= 0.005, pct <= 0.02, value > 1.6) %>%
+    group_by(locus) %>%
+    dplyr::slice_max(order_by = pct, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    left_join(counts, by = "locus")
+
+  ggplot(knee, aes(x = pct, y = value, color = locus)) +
+    geom_line(linewidth = 0.55, alpha = 0.95) +
+    scale_color_manual(values = chain_cols, breaks = keep_loci, drop = FALSE) +
+    scale_y_log10(labels = label_number(accuracy = 1), breaks = log_breaks(n = 7)) +
+    scale_x_continuous(trans  = pseudo_log_trans(sigma = 1e-4), limits = c(0, 1),
+      breaks = c(0, 0.01, 0.03, 0.1, 0.3, 1), labels = percent_format(accuracy = 1)) +
+    labs(x = "Spatial sequence group size rank (%)", y = "Reads per UMI-SPBC group",color = NULL) +
+    annotate("label", x = 0.0001, y = 10, label = sample_label, hjust = 0, vjust = 1, fill = "gray91", label.size = 0, size = 2.7) +
+    ggrepel::geom_text_repel(data = label_df, aes(label = label), inherit.aes = TRUE,
+      color = "black", size = 2.6, direction = "y",hjust = 0,
+      nudge_x = 1.4,                # push labels right
+      segment.color = "black", segment.size = 0.3, box.padding = 0.15,
+      force = 3,                     # stronger separation
+      max.overlaps = Inf, min.segment.length = 0) +
+    theme_bw(base_size = 7) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(linewidth = 0.25),
+      axis.title = element_text(size = 7, color = "black"),
+      axis.text  = element_text(size = 6, color = "black"),
+      legend.title = element_text(size = 6.5, color = "black"),
+      legend.text  = element_text(size = 6, color = "black"),
+      panel.border = element_rect(linewidth = 0.2),
+      plot.margin = margin(2, 8, 2, 2),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background  = element_rect(fill = "white", color = NA))
+}
+```
+
+function to only extract the legend
+```{r}
+extract_legend <- function(p) {
+  g <- ggplotGrob(p)
+  idx <- which(sapply(g$grobs, function(x) x$name) == "guide-box")
+  if (length(idx) == 0) return(grid::zeroGrob())
+  g$grobs[[idx[1]]]
+}
+```
+
+
+```{r, warning=FALSE}
+#extract legend form one plot to add it later to the combined one
+
+#pacbio sample (top)
+p_pb  <- plot_knee(bt_sp$S1_PB_Q17$airr_df,  "S1_PB_Q17",  chain_cols)
+leg <- extract_legend(p_pb + theme(legend.position = "bottom"))
+
+p_pb <- p_pb + theme(
+  axis.title.x = element_blank(),
+  axis.text.x  = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.y = element_blank(),
+  plot.margin  = margin(t = 5, r = 5, b = 0, l = 0),
+  legend.position = "none")
+
+#ont sample (below)
+p_ont <- plot_knee(bt_sp$S1_ONT_Q17$airr_df, "S1_ONT_Q17", chain_cols)
+p_ont <- p_ont + theme(
+  axis.title.y = element_blank(),
+  plot.margin  = margin(t = 0, r = 5, b = 5, l = 0),
+  legend.position = "none")
+```
+
+```{r}
+#add custom y-label
+panels <- plot_grid(p_pb, p_ont, ncol = 1, align = "v", axis = "l", rel_heights = c(1, 1.15))
+
+#shared y-label across both 
+panels_with_ylabel <- plot_grid(
+  ggdraw() + draw_label("Reads per UMI-SPBC group", angle = 90, size = 7),
+  panels, ncol = 2, rel_widths = c(0.045, 1))
+```
+
+put together the final figure
+```{r, fig.width=3.2, fig.height=4}
+# center bottom legend (cant manipulate with margin bc its a 'separate' figure)
+legend_centered <- ggdraw() +
+  draw_grob(leg, x = 0.55, y = 0.5, width = 0.9, height = 1, hjust = 0.5, vjust = 0.5)
+
+p3_a <- plot_grid(panels_with_ylabel, legend_centered, ncol = 1,
+  rel_heights = c(1, 0.06),label_size = 20, label_x = -0.02) + 
+  theme(plot.margin  = margin(l = 5))
+
+p3_a
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel3/intermediates/")
+saveRDS(p3_a, file.path(save_dir, "p3_a.rds"))
+```
+
+```{r}
+sessionInfo()
+```

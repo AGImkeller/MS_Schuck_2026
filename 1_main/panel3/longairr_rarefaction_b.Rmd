@@ -1,0 +1,359 @@
+---
+title: "longairr_rarefaction"
+author: "Jonas Schuck"
+date: "2026-04-06"
+output: html_document
+---
+
+########################################
+#
+# Script contains rarefaction analysis to determine the number of
+# productive AIRR sequences processed by LongAIRR at different sequencing depths.
+# We compare the technical replicated datsets at different quality filter settings
+# S1_ONT_Q10, S1_ONT_Q17 and S1_PB_Q17 and split by locus (BCR, TCR)
+# Rarefaction curves are split 
+#
+# Results are shown in LongAIRR Fig. 3b
+#
+########################################
+
+```{r}
+library(tibble)
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(ggh4x)
+library(cowplot)
+library(patchwork)
+library(scales)
+```
+
+--------------------3_b--------------
+-----------rarefaction curves
+-------------------------------------
+
+
+reproducibility command for seqkit:
+
+~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/rarefaction/subsamples_raw/subsamples_sp28$ seqkit stats simplex_duplex_f0_010000.fastq 
+
+Manual annotation of number of reads for each subsample (determined with seqkit stats)
+```{r}
+# For Nano17 + Nano10 (replicates)
+subsamples_A <- tribble(
+  ~subsample, ~fraction, ~input_reads,
+  "f0_001", 0.001, 26673,
+  "f0_010", 0.010, 265942,
+  "f0_021", 0.021, 572867,
+  "f0_046", 0.046, 1233141,
+  "f0_100", 0.100, 2653456,
+  "f0_215", 0.215, 5721426,
+  "f0_464", 0.464, 12327756,
+  "f0_600", 0.600, 15935283,
+  "f0_750", 0.750, 19924341,
+  "f0_900", 0.900, 23908068,
+  "f1_000", 1.000, 26561301)
+
+# For Pacbio
+subsamples_B <- tribble(
+  ~subsample, ~fraction, ~input_reads,
+  "f0_001", 0.001, 10512,
+  "f0_010", 0.010, 104660,
+  "f0_100", 0.100, 1048609,
+  "f0_021", 0.021, 225926,
+  "f0_046", 0.046, 486828,
+  "f0_215", 0.215, 2259793,
+  "f0_464", 0.464, 4866168,
+  "f0_600", 0.600, 6291175,
+  "f0_750", 0.750, 7866435,
+  "f0_900", 0.900, 9439434,
+  "f1_000", 1.000, 10486435)
+
+# combined raw sequences sp28=sp12
+subsamples_C <- tribble(
+  ~subsample, ~fraction, ~input_reads,
+  "f0_001", 0.001, 25319,
+  "f0_010", 0.010, 252275,
+  "f0_021", 0.021, 543591,
+  "f0_046", 0.046, 1169824,
+  "f0_100", 0.100, 2516796,
+  "f0_215", 0.215, 5426538,
+  "f0_464", 0.464, 11692442,
+  "f0_600", 0.600, 15144868,
+  "f0_750", 0.750, 18897868,
+  "f0_900", 0.900, 22676177,
+  "f1_000", 1.000, 25193283)
+
+```
+
+list all samples / filter version and whether its replicated (A: ONT and B: Pacbio)
+```{r, warning=FALSE}
+airr_filename_bcr <- "ig_p_parse-select.tsv"
+airr_filename_tcr <- "tr_p_parse-select.tsv"
+
+# change this once PB and ONT have been reprocessed
+
+datasets <- tribble( #change paths
+  ~dataset,  ~base_out,                                                                                        ~version, ~subsample_set,
+  "S1_ONT_Q17",  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/rarefaction/subsamples_processed/sp12_ont_17/",  "17", "A",
+  "S1_ONT_Q10",  "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/rarefaction/subsamples_processed/sp12_ont_10/",  "10", "A",
+  "S1_PB_Q17",   "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/rarefaction/subsamples_processed/pb_17/",        "17", "B",
+  "S1_ONT_reseq_total", "~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/manuscript_analysis/rarefaction/subsamples_processed/sp28_sp12_combined_17/", "17", "C"
+)
+```
+
+```{r}
+# getter function
+get_subsamples <- function(which) {
+  if (which == "A") return(subsamples_A)
+  if (which == "B") return(subsamples_B)
+  if (which == "C") return(subsamples_C)
+}
+```
+
+```{r}
+# build counts
+# one row per dataset x subsample x receptor
+rows <- list()
+k <- 1
+
+for (d in seq_len(nrow(datasets))) {
+
+  ds_name <- datasets$dataset[d]
+  base_out <- datasets$base_out[d]
+  ver <- datasets$version[d]
+  subs_tbl <- get_subsamples(datasets$subsample_set[d])
+
+  message("=== Dataset: ", ds_name, " (ver=", ver, ") ===")
+
+  for (i in seq_len(nrow(subs_tbl))) {
+    ss <- subs_tbl$subsample[i]
+    # paths
+    airr_file_bcr <- file.path(base_out, ss,  "airr", airr_filename_bcr)
+    airr_file_tcr <- file.path(base_out, ss,  "airr", airr_filename_tcr)
+
+    # BCR (+filter)
+    df_bcr <- readr::read_tsv(airr_file_bcr, show_col_types = FALSE, progress = FALSE) %>%
+                              dplyr::mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+                                            start = as.integer(v_sequence_start),
+                                            end = as.integer(v_sequence_end))) %>%
+                              filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction) & !grepl("N", v_region_sequence))
+    
+      # consensus == 1 group
+      bcr_total <- df_bcr %>%
+        filter(consensus_count == 1) %>%
+        summarise(n = n_distinct(group), .groups = "drop") %>%
+        pull(n)
+      # consensus > 1 group
+      bcr_cons1 <- df_bcr %>%
+        filter(consensus_count > 1) %>%
+        summarise(n = n_distinct(group), .groups = "drop") %>%
+        pull(n)
+    # put it in the list
+    rows[[k]] <- tibble(dataset = ds_name, subsample = ss, receptor = "BCR",
+                        metric = "cons = 1", unique_molecules = bcr_total); k <- k + 1
+    rows[[k]] <- tibble(dataset = ds_name, subsample = ss, receptor = "BCR",
+                        metric = "cons > 1", unique_molecules = bcr_cons1); k <- k + 1
+
+    # TCR (+filter)
+    df_tcr <- readr::read_tsv(airr_file_tcr, show_col_types = FALSE, progress = FALSE) %>%
+                              dplyr::mutate(v_region_sequence = stringr::str_sub(toupper(sequence),
+                                            start = as.integer(v_sequence_start),
+                                            end = as.integer(v_sequence_end))) %>%
+                              filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus & !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction) & !grepl("N", v_region_sequence))
+      # consensus == 1 group
+      tcr_total <- df_tcr %>%
+        filter(consensus_count == 1) %>%
+        summarise(n = n_distinct(group), .groups = "drop") %>%
+        pull(n)
+      # consensus > 1 group
+      tcr_cons1 <- df_tcr %>%
+        filter(consensus_count > 1) %>%
+        summarise(n = n_distinct(group), .groups = "drop") %>%
+        pull(n)
+    # put in the list
+    rows[[k]] <- tibble(dataset = ds_name, subsample = ss, receptor = "TCR",
+                        metric = "cons = 1", unique_molecules = tcr_total); k <- k + 1
+    rows[[k]] <- tibble(dataset = ds_name, subsample = ss, receptor = "TCR",
+                        metric = "cons > 1", unique_molecules = tcr_cons1); k <- k + 1
+  }
+}
+
+#combine all rows
+counts_raw <- bind_rows(rows)
+```
+
+
+```{r}
+# add fraction metdata
+meta_A <- subsamples_A %>% mutate(subsample_set = "A")
+meta_B <- subsamples_B %>% mutate(subsample_set = "B")
+meta_C <- subsamples_C %>% mutate(subsample_set = "C")
+meta_all <- bind_rows(meta_A, meta_B, meta_C)
+
+
+counts_df <- counts_raw %>%
+  left_join(datasets %>% select(dataset, subsample_set), by = "dataset") %>%
+  left_join(meta_all, by = c("subsample", "subsample_set")) %>%
+  mutate(percent = 100 * fraction) %>%
+  arrange(receptor, dataset, metric, fraction)
+
+#example check
+head(counts_df %>% 
+  filter(dataset=="S1_PB_Q17", receptor=="BCR") %>% print(n=Inf))
+
+counts_df2 <- counts_df %>%
+  mutate(metric = factor(metric, levels = c("cons = 1", "cons > 1")))
+```
+
+#rarefaction figure
+```{r}
+sample_cols <- c("S1_PB_Q17"  = "#2f5e8fff", "S1_ONT_Q17" = "#000000ff", "S1_ONT_Q10" = "#d95f02ff", "S1_ONT_reseq_total" = "#1b9e77ff")
+
+counts_df2$dataset <- factor(counts_df$dataset, levels = c("S1_PB_Q17", "S1_ONT_Q17", "S1_ONT_Q10", "S1_ONT_reseq_total"))
+counts_df2$metric <- factor(counts_df$metric,levels = c("cons = 1", "cons > 1"))
+
+x_guides <- counts_df2 %>%
+  distinct(percent) %>%
+  arrange(percent)
+```
+
+
+```{r}
+make_p3 <- function(df, rec) {
+  ggplot(df %>% filter(receptor == rec), aes(x = percent, y = unique_molecules, color = dataset, linetype = metric, group = interaction(dataset, metric))) +
+    geom_vline(data = x_guides, aes(xintercept = percent), inherit.aes = FALSE, color = "black", linetype = "dotted", linewidth = 0.25) +
+    geom_line(linewidth = 0.8, alpha = 0.9) +
+    facet_grid(metric ~ ., scales = "free_y", switch = "y", labeller = labeller(metric = function(x) paste(rec, x))) +
+    scale_x_continuous(breaks = seq(0, 100, by = 20), labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0.01, 0.03))) +
+    scale_color_manual(values = sample_cols) +
+    scale_linetype_manual(values = c("cons = 1" = "solid", "cons > 1" = "twodash")) +
+    labs(x = "Raw input reads (%)", y = "Number of unique UMI-SPBC groups", color = NULL, linetype = NULL) +
+    theme_bw(base_size = 7) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey88", linewidth = 0.25),
+      panel.border = element_rect(linewidth = 0.2),
+      axis.title = element_text(size = 7, color = "black"),
+      axis.text = element_text(size = 6, color = "black"),
+      strip.background = element_rect(fill = "grey90", color = "grey50", linewidth = 0.2),
+      strip.text = element_text(size = 6.5, color = "black"),
+      legend.title = element_text(size = 6.5, color = "black"),
+      legend.text = element_text(size = 6, color = "black"),
+      legend.key.width = unit(0.45, "cm"),
+      legend.key.height = unit(0.28, "cm"),
+      legend.spacing.y = unit(1, "pt"),
+      legend.key.spacing.x = unit(4, "pt"),
+      legend.margin = margin(0, 0, 0, 0),
+      legend.box.margin = margin(0, 0, 0, 0),
+      plot.margin = margin(0, 0, 0, 0),
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA))
+}
+```
+
+```{r, fig.width=2, fig.height=3}
+p3_bcr <- make_p3(counts_df2, "BCR") +
+  ggh4x::facetted_pos_scales(y = list(
+                  metric == "cons = 1" ~ scale_y_continuous(breaks = seq(0, 200000, by = 10000), labels = label_number(big.mark = " ")),
+                  metric == "cons > 1" ~ scale_y_continuous(breaks = seq(0, 15000, by = 10000), labels = label_number(big.mark = " "))))
+
+p3_bcr
+```
+
+
+```{r, fig.height=3, fig.width=2}
+p3_tcr <- make_p3(counts_df2, "TCR") +
+  ggh4x::facetted_pos_scales(y = list(
+                  metric == "cons = 1" ~ scale_y_continuous(breaks = seq(0, 7000, by = 450), labels = label_number(big.mark = " ")),
+                  metric == "cons > 1" ~ scale_y_continuous(breaks = seq(0, 1000, by = 450), labels = label_number(big.mark = " "))))
+
+p3_tcr <- p3_tcr +
+  theme(axis.title.y = element_blank())
+```
+
+```{r, fig.width=4.5, fig.height=3}
+p3_b_test <- (p3_bcr | p3_tcr) + plot_layout(guides = "collect", widths = c(1,1.1)) &
+  # theme(
+  #   legend.position = "bottom",
+  #   legend.box = "horizontal",
+  #   legend.margin = margin(0, 0, 0, 0),
+  #   legend.box.margin = margin(0, 0, 0, 0),
+  #   plot.margin = margin(l=2, 0, 0, 0))
+  guides(linetype = guide_legend(nrow = 1, order = 1), color = guide_legend(nrow = 1, order = 2)) &
+  theme(
+  legend.position = "bottom",
+  legend.direction = "horizontal",
+  legend.box = "vertical",
+  legend.box.just = "center",
+  legend.spacing.y = grid::unit(0, "pt"),
+  legend.margin = margin(0, 0, 0, 0),
+  legend.box.margin = margin(0, 0, 0, 0),
+  plot.margin = margin(l = 2, 0, 0, 0))
+
+p3_b <- p3_b_test + patchwork::plot_annotation(theme = theme(plot.margin = margin(5, 5, 5, 5)))
+p3_b
+```
+
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel3/intermediates/")
+saveRDS(p3_b, file.path(save_dir, "p3_b_split.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+
+
+## backup v1
+
+```{r}
+# 
+# # extra y-breaks
+# bcr_extra  <- c(7500, 15000, 25000, 75000, 125000)
+# tcr_breaks <- seq(0, 7000, by = 1000)
+# 
+# p3_b <- ggplot(counts_df, aes(x = percent, y = unique_molecules, color = dataset,
+#                linetype = metric,group = interaction(dataset, metric))) +
+#   geom_vline(data = x_guides, aes(xintercept = percent), inherit.aes = FALSE,
+#     color = "black", linetype = "dotted", linewidth = 0.25) +
+#   geom_line(linewidth = 0.8, alpha = 0.9) +
+#   facet_wrap(~ receptor, nrow = 2, scales = "free_y") +
+#   scale_x_continuous(breaks = seq(0, 100, by = 10), labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0.01, 0.03))) +
+#   scale_color_manual(values = sample_cols) +
+#   scale_linetype_manual(values = c("cons > 1" = "twodash", "cons = 1" = "solid")) +
+#   labs(x = "Raw input reads (%)", y = "Unique spatial sequence groups", color = NULL, linetype = NULL) +
+#   theme_bw(base_size = 7) +
+#   theme(
+#     panel.grid.minor = element_blank(),
+#     panel.grid.major.x = element_blank(),
+#     panel.grid.major.y = element_line(color = "grey88", linewidth = 0.25),
+#     panel.border = element_rect(linewidth = 0.2),
+#     axis.title = element_text(size = 7, color = "black"),
+#     axis.text = element_text(size = 6, color = "black"),
+#     strip.background = element_rect(fill = "grey90", color = "grey50", linewidth = 0.2),
+#     strip.text = element_text(size = 6.5, color = "black"),
+#     legend.position = "bottom",
+#     legend.box = "vertical",
+#     legend.title = element_text(size = 6.5, color = "black"),
+#     legend.text = element_text(size = 6, color = "black"),
+#     legend.key.width = unit(0.45, "cm"),
+#     legend.key.height = unit(0.28, "cm"),
+#     legend.spacing.y = unit(5, "pt"),
+#     legend.key.spacing.x = unit(12, "pt"),
+#     legend.margin = margin(0, 0, 0, 0),
+#     legend.box.margin = margin(0, 0, 0, 0),
+#     plot.margin = margin(0, 0, 0, 0),
+#     panel.background = element_rect(fill = "white", color = NA),
+#     plot.background = element_rect(fill = "white", color = NA)) +
+#   ggh4x::facetted_pos_scales( # add extra scales, custom for each facet
+#     y = list(receptor == "BCR" ~ scale_y_continuous(breaks = function(lims) sort(unique(c(pretty(lims, n = 5), bcr_extra))),
+#              labels = label_number(big.mark = " ")),
+#              receptor == "TCR" ~ scale_y_continuous(breaks = tcr_breaks,
+#              labels = label_number(big.mark = " "))))
+```
+
+

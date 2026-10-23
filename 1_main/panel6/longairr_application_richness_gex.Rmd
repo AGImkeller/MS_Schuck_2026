@@ -1,0 +1,292 @@
+---
+title: "LongAIRR Figure 6 clonal richness and niche enrichment"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains analysis of spatial IGH clonal richness and cell-signature
+# enrichment in two clone-rich tissue regions.
+#
+# Results are shown in LongAIRR Fig. 6.
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(alakazam)
+library(shazam)
+library(scoper)
+library(patchwork)
+library(tiff)
+library(ggforce)
+```
+
+```{r}
+AF_AIRR_PATH <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv")
+TISSUE_POSITIONS_PATH <- file.path("~/mnt_AG_Imkeller/experiments/chromium_visiusm_202510/202510_spaceranger_outputs_SO#52/SOI52_3_2459/outs/spatial/tissue_positions.csv") # from spaceranger
+UCELL_RDS_PATH <- file.path("~/mnt_AG_Imkeller/group_members/anchang/Glioblastoma_TLS_project/Visium/data/processed/sample3_2459_Gbmap_cell_signature_ucell_scores.rds") # internally processed
+ORIGINAL_TISSUE_IMAGE_PATH <- file.path("~/mnt_AG_Imkeller/group_members/ortega_iannazzo/spatial_transcriptomics/experiments/2025-03-27_SOI#52/slide_images/Visium_Image_Alignment/original/3_2459_Visium_250326.tif")
+
+CLONE_THRESHOLD <- 0.15
+CLONE_MIN_CONSENSUS_COUNT <- 2L
+SPATIAL_MIN_CONSENSUS_COUNT <- 2L 
+NPROC <- 8
+
+TISSUE_CROP_LEFT <- 0.08
+TISSUE_CROP_RIGHT <- 0.95
+TISSUE_CROP_TOP <- 0.05
+TISSUE_CROP_BOTTOM <- 0.72
+
+VISIUM_NEIGHBOR_DISTANCE_UM <- 100
+VISIUM_SPOT_DIAMETER_UM <- 55
+FULL_SCALE_BAR_UM <- 1000
+
+# Clone-rich regions. Coordinates are fractions of the registered image.
+REGION_BOXES <- tibble::tribble(
+  ~region,    ~left, ~right, ~top, ~bottom,
+  "Region A",  0.35,   0.61, 0.10,    0.23,
+  "Region B",  0.30,   0.46, 0.38,    0.48
+)
+
+REGION_COLORS <- c("Region A" = "#2F5E8F", "Region B" = "gray35")
+
+UCELL_SIGNATURES <- c("B cell" = "B_cell_logcounts_UCell",
+                      "Plasma B" = "Plasma_B_logcounts_UCell",
+                      "T cell" = "CD4_CD8_logcounts_UCell",
+                      "Capillary endothelial" = "Endo_capilar_logcounts_UCell",
+                      "Perivascular fibroblast" = "Perivascular_fibroblast_logcounts_UCell",
+                      "Neural-like tumor" = "NPC_like_neural_logcounts_UCell",
+                      "Neuron" = "Neuron_logcounts_UCell")
+```
+
+define productive AF IGH clones
+```{r}
+# filter for IGH | apply downstream ambigous filters 
+af_igh <- readr::read_tsv(AF_AIRR_PATH, show_col_types = FALSE) %>%
+  select(-any_of(c("x", "y"))) %>%
+  mutate(group = as.character(group),
+         spbc = as.character(spbc), umi = as.character(umi),
+         v_region_sequence = str_sub(toupper(sequence),
+         start = as.integer(v_sequence_start), end = as.integer(v_sequence_end)),
+         c_call_subfam = str_remove(c_call, "\\*.*$"),
+         junction_aa = coalesce(na_if(as.character(junction_aa), ""),
+      as.character(alakazam::translateDNA(as.character(junction))))) %>%
+   filter(locus == "IGH",
+    !is.na(c_call), str_sub(c_call, 1, 3) == locus,
+    !str_detect(umi, "TTTTTTTTTTT"), !is.na(junction), junction != "", !str_detect(junction, "N"),
+    !is.na(v_region_sequence), !str_detect(v_region_sequence, "N"),
+    c_call_subfam %in% c("IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHM"),
+    consensus_count >= CLONE_MIN_CONSENSUS_COUNT) %>%
+  # filter(locus == "IGH", !is.na(group), group != "",
+  #   !is.na(c_call), str_sub(c_call, 1, 3) == locus,
+  #   !str_detect(umi, "TTTTTTTTTTT"), !is.na(junction), junction != "", !str_detect(junction, "N"),
+  #   !is.na(v_region_sequence), !str_detect(v_region_sequence, "N"),
+  #   c_call_subfam %in% c("IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHM"),
+  #   consensus_count >= CLONE_MIN_CONSENSUS_COUNT) %>%
+  arrange(v_call, j_call, junction_length, junction, group)
+
+# use threshold 0.15
+af_distances <- shazam::distToNearest(af_igh, model = "ham", normalize = "len", vCallColumn = "v_call", locusValues = "IGH", nproc = NPROC)
+af_clones <- scoper::hierarchicalClones(af_distances, method = "nt", first = FALSE, threshold = CLONE_THRESHOLD,verbose = FALSE, nproc = NPROC) %>%
+  mutate(clone_id_af = as.character(clone_id))
+```
+
+read tissue image and spatial coordinates
+```{r}
+tissue_image <- tiff::readTIFF(ORIGINAL_TISSUE_IMAGE_PATH)
+image_height <- dim(tissue_image)[1]
+image_width <- dim(tissue_image)[2]
+
+tissue_positions <- readr::read_csv(TISSUE_POSITIONS_PATH, show_col_types = FALSE) %>%
+  mutate(spbc = str_remove(as.character(barcode), "-1$"),
+         image_x = pxl_col_in_fullres,
+         image_y = pxl_row_in_fullres)
+
+tissue_background <- annotation_raster(tissue_image, xmin = 0, xmax = image_width, ymin = image_height, ymax = 0)
+
+# fixed positions for scale bars
+# Convert registered-image pixels to physical distance using adjacent
+# standard Visium spot centers, which are 100 micrometers apart.
+visium_neighbor_distances <- tissue_positions %>%
+  arrange(array_row, array_col) %>%
+  group_by(array_row) %>%
+  mutate(next_array_col = lead(array_col),
+         next_image_x = lead(image_x),
+         next_image_y = lead(image_y),
+         neighbor_distance_px = sqrt((next_image_x - image_x)^2 + (next_image_y - image_y)^2)) %>%
+  ungroup() %>%
+  filter(next_array_col - array_col == 2)
+
+pixels_per_um <- median(visium_neighbor_distances$neighbor_distance_px, na.rm = TRUE) / VISIUM_NEIGHBOR_DISTANCE_UM # VISIUM_NEIGHBOR_DISTANCE_UM = 100
+spot_radius_px <- VISIUM_SPOT_DIAMETER_UM * pixels_per_um / 2
+
+#scale bars
+make_scale_bar <- function(xmin, xmax, ymin, ymax, length_um) {
+  x_range <- xmax - xmin
+  y_range <- ymax - ymin
+  x_start <- xmin + 0.07 * x_range
+  x_end <- x_start + length_um * pixels_per_um
+  y_bar <- ymax - 0.10 * y_range
+  tick_height <- 0.025 * y_range
+
+  list(annotate("segment", x = x_start, xend = x_end, y = y_bar, yend = y_bar,
+      linewidth = 0.8, color = "black"),
+    annotate("segment", x = x_start, xend = x_start,
+      y = y_bar - tick_height, yend = y_bar + tick_height,
+      linewidth = 0.8, color = "black"),
+    annotate("segment", x = x_end, xend = x_end,
+      y = y_bar - tick_height, yend = y_bar + tick_height,
+      linewidth = 0.8, color = "black"),
+    annotate("text", x = (x_start + x_end) / 2, y = y_bar + 0.055 * y_range,
+      label = "1 mm", size = 2.2, color = "black")
+  )
+}
+
+full_xmin <- image_width * TISSUE_CROP_LEFT
+full_xmax <- image_width * TISSUE_CROP_RIGHT
+full_ymin <- image_height * TISSUE_CROP_TOP
+full_ymax <- image_height * TISSUE_CROP_BOTTOM
+```
+
+calculate clonal richness and define regions
+```{r}
+clone_spot_pairs <- af_clones %>%
+  filter(consensus_count >= SPATIAL_MIN_CONSENSUS_COUNT) %>%
+  distinct(spbc, clone_id_af) %>%
+  inner_join(tissue_positions %>% filter(in_tissue == 1) %>% select(spbc, image_x, image_y), by = "spbc")
+
+clone_richness <- clone_spot_pairs %>%
+  count(spbc, image_x, image_y, name = "n_unique_clones")
+
+richness_max <- max(clone_richness$n_unique_clones)
+
+region_boxes <- REGION_BOXES %>%
+  mutate(region_short = str_remove(region, "Region "),
+    xmin = left * image_width, xmax = right * image_width, ymin = top * image_height, ymax = bottom * image_height)
+
+region_airr_spots <- purrr::map_dfr(region_boxes$region, function(region_name) {
+  region_box <- region_boxes %>% filter(region == region_name)
+
+  clone_richness %>%
+    filter(image_x >= region_box$xmin, image_x <= region_box$xmax, image_y >= region_box$ymin, image_y <= region_box$ymax) %>%
+    mutate(region = region_name)
+})
+```
+
+--------
+----6 A
+--------
+
+clonal richness figure
+```{r}
+richness_colors <- c("1" = "#C7E9C0", "2" = scales::seq_gradient_pal("#C7E9C0", "#1B9E77", space = "Lab")(0.5),
+                     "3" = "#1B9E77", "4" = "#004529")
+
+p_clonal_richness <- ggplot() + tissue_background +
+  geom_point(data = clone_richness, aes(x = image_x, y = image_y, fill = factor(pmin(n_unique_clones, 4), levels = 1:4)),
+             shape = 21, size = 1.5, color = "black", stroke = 0.2) +
+  geom_rect(data = region_boxes, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, color = region), fill = NA, linewidth = 0.8) +
+  geom_text(data = region_boxes, aes(x = xmin, y = ymin, label = region_short, color = region),
+            hjust = -0.1, vjust = -0.4, fontface = "bold", size = 2.3) +
+  make_scale_bar(full_xmin, full_xmax, full_ymin, full_ymax, FULL_SCALE_BAR_UM) +
+  scale_fill_manual(values = richness_colors, breaks = as.character(1:4), labels = c("1", "2", "3", "\u22654"), drop = FALSE,
+                    name = "Unique IGH clones per spot") +
+  scale_color_manual(values = REGION_COLORS, guide = "none") +
+  scale_y_reverse(limits = c(image_height, 0), expand = expansion(0)) +
+  coord_fixed(xlim = c(full_xmin, full_xmax),
+              ylim = c(full_ymax, full_ymin), expand = FALSE) +
+  guides(fill = guide_legend(nrow = 1, title.position = "top", title.hjust = 0.5, override.aes = list(size = 2.5))) +
+  theme_void(base_size = 7) +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.box = "horizontal",
+        legend.key.width = grid::unit(0.3, "cm"),
+        legend.key.height = grid::unit(0.3, "cm"),
+        legend.spacing.x = grid::unit(1, "pt"),
+        legend.margin = margin(0, 0, 0, 0),
+        legend.box.margin = margin(0, 0, 0, 0),
+        legend.title = element_text(size = 6.5, color = "black"),
+        legend.text = element_text(size = 6, color = "black"),
+        plot.margin = margin(2, 2, 2, 2))
+
+p_clonal_richness
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+#saveRDS(p_clonal_richness, file=file.path(save_dir, "p6_a.rds"))
+```
+
+---------
+-----6B - Ucell score for Regions A and B
+---------
+
+regional cell-signature enrichment
+```{r}
+#
+ucell_long <- readRDS(UCELL_RDS_PATH) %>%
+  as.data.frame() %>%
+  as_tibble() %>%
+  mutate(spbc = str_remove(as.character(spbc_clean), "-1$")) %>%
+  inner_join(tissue_positions %>% filter(in_tissue == 1) %>% select(spbc), by = "spbc") %>%
+  select(spbc, all_of(unname(UCELL_SIGNATURES))) %>%
+  pivot_longer(cols = -spbc, names_to = "signature_column", values_to = "ucell_score") %>%
+  mutate(signature = names(UCELL_SIGNATURES)[match(signature_column, unname(UCELL_SIGNATURES))],
+         signature = factor(signature, levels = rev(names(UCELL_SIGNATURES)))) %>%
+  group_by(signature) %>%
+  mutate(ucell_z = as.numeric(scale(ucell_score))) %>%
+  ungroup()
+
+region_ucell <- region_airr_spots %>%
+  select(region, spbc) %>%
+  distinct() %>%
+  inner_join(ucell_long, by = "spbc") %>%
+  mutate(region = factor(region, levels = names(REGION_COLORS)))
+
+region_ucell_summary <- region_ucell %>%
+  group_by(region, signature) %>%
+  summarise(mean_ucell_z = mean(ucell_z, na.rm = TRUE), .groups = "drop")
+
+p_region_ucell <- ggplot(region_ucell_summary, aes(x = mean_ucell_z, y = signature, fill = region, group = region)) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.4) +
+  geom_col(width = 0.68, position = position_dodge(width = 0.74), color = "grey35", linewidth = 0.25, orientation = "y") +
+  geom_point(data = region_ucell, aes(x = ucell_z, y = signature, color = region, group = region),
+             inherit.aes = FALSE, shape = 21, size = 1.15, fill = "white", stroke = 0.28, alpha = 0.65,
+             position = position_jitterdodge(jitter.width = 0, jitter.height = 0.035, dodge.width = 0.74, seed = 1)) +
+  scale_fill_manual(values = REGION_COLORS, name = NULL) +
+  scale_color_manual(values = REGION_COLORS, guide = "none") +
+  labs(x = "Normalized expression-signature score\n(UCell z-score)", y = NULL) +
+  guides(fill = guide_legend(override.aes = list(color = "grey40", linewidth = 0.25))) +
+  theme_bw(base_size = 7) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    axis.text.x = element_text(size = 6, color = "black"),
+    legend.title = element_text(size = 6.5, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.box.margin = margin(t = -4),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom")
+
+p_region_ucell
+```
+
+```{r}
+save_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel6/intermediates/")
+saveRDS(p_region_ucell, file=file.path(save_dir, "p6_b.rds"))
+```
+
+```{r}
+sessionInfo()
+```
+

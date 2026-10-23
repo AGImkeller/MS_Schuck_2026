@@ -1,0 +1,40 @@
+---
+title: "longairr_p3"
+author: "Jonas Schuck"
+date: "2026-04-06"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure 3
+#
+########################################
+
+```{r}
+library(cowplot)
+library(ggplot2)
+```
+
+```{r}
+results_dir <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel3/intermediates/")
+
+p3_a <- readRDS(file.path(results_dir,"p3_a.rds"))
+p3_b <- readRDS(file.path(results_dir,"p3_b_split.rds"))
+```
+
+#p3 complete
+```{r, fig.width=7.5, fig.height=4.2}
+p3_complete <- plot_grid(p3_a, p3_b, ncol=2, labels=c("a", "b"), label_size = 7, hjust=-0.1, rel_widths = c(0.6,1))
+p3_complete
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p3_split.pdf", plot=p3_complete,width = 7.5, height = 4.2)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p3_split.png", plot=p3_complete,width = 7.5, height = 4.2)
+```
+
+
+```{r}
+sessionInfo()
+```

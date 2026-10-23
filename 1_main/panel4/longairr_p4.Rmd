@@ -1,0 +1,87 @@
+---
+title: "Untitled"
+author: "Jonas Schuck"
+date: "2026-04-07"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure 4
+#
+########################################
+
+```{r}
+library(png)
+library(cowplot)
+library(patchwork)
+library(ggplot2)
+```
+
+#read in intermediates
+```{r}
+
+#A (tapestation)
+af_4a <- png::readPNG("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/figures/af_scheme.png")  
+p4_a <- ggdraw() + draw_image(af_4a)
+
+#B C D (q vs length)
+p4_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_b.rds")
+p4_c <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_c.rds")
+p4_d <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_d.rds")
+
+#E (retention)
+p4_e <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_e.rds")
+  
+#F G (length)
+#p4_f <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/main/panel4/intermediates/p4_f.rds")
+#p4_g <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/main/panel4/intermediates/p4_g.rds")
+p4_f_g <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_f_g.rds")
+
+
+p4_h <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel4/intermediates/p4_h.rds")
+```
+
+-----layout 2
+
+```{r}
+p4_a <- p4_a + patchwork::plot_annotation(theme = theme(plot.margin = margin(l=15, 5, 5, 5))) 
+p4_a_b <- plot_grid(p4_a, p4_b, labels = c("a", "b"), label_size=7, nrow=2, hjust = -0.8, vjust = 1.0)
+p4_a_b
+```
+
+
+```{r}
+p4_c_d <- plot_grid(p4_c, p4_d, labels = c("c", "d"), label_size=7, nrow=2, hjust=-0.8, vjust=1.0, rel_heights = c(1,0.85))
+p4_c_d
+```
+
+```{r, fig.width=7.5, fig.height=4}
+p4_top <- plot_grid(p4_a_b, p4_c_d, ncol=2, rel_widths = c(0.85, 1))
+p4_top
+```
+
+```{r, fig.height=4}
+p4_e_h <- plot_grid(p4_e, p4_h, nrow=2, labels = c("e", "h"), label_size=7, rel_heights = c(1,1))
+#p4_e_h
+```
+
+e, h, f, g
+```{r, fig.width=7}
+p4_bot <- plot_grid(p4_e_h, p4_f_g, ncol = 2, rel_widths = c(0.85,1))
+p4_bot
+```
+
+```{r, fig.height=8.5, fig.width=7}
+p4_combined <- plot_grid(p4_top, p4_bot, nrow=2, rel_heights=c(0.85,1))
+p4_combined
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p4.pdf", plot=p4_combined,width = 7.5, height = 8.5)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p4.png", plot=p4_combined,width = 7.5, height = 8.5)
+```
+
+```{r}
+sessionInfo()
+```

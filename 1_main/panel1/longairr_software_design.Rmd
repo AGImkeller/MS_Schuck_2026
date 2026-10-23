@@ -1,0 +1,48 @@
+---
+title: "retention_figure_assembly"
+author: "Jonas Schuck"
+date: "2025-08-04"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure 1
+#
+########################################
+
+
+```{r}
+library(ggplot2)
+library(patchwork)
+library(cowplot)
+```
+
+```{r}
+workflow <- png::readPNG("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel1/figures/full_longairr_scheme.png")  
+workflow_plot <- ggdraw() + draw_image(workflow)
+
+
+#metro <- png::readPNG("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/main/panel1/figures/metromap_transparent.png")
+metro <- png::readPNG("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/2_main/panel1/figures/LongAIRR_new_overview.drawio.png")
+metro_plot <- ggdraw() + draw_image(metro)
+```
+
+
+```{r, fig.width=7, fig.height=8}
+combined_fig1 <- plot_grid(workflow_plot + theme(plot.margin = margin(5, 5, 5, 5)),
+  metro_plot + theme(plot.margin = margin(5, 5, 5, 5)),
+  nrow = 2, labels = c("a", "b"), rel_heights = c(0.5, 1.22), label_size = 7)
+
+combined_fig1
+```
+
+```{r}
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p1.pdf", plot=combined_fig1,width = 7, height = 8)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/p1.png", plot=combined_fig1,width = 7, height = 8)
+```
+
+```{r}
+sessionInfo()
+```
+

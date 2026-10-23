@@ -1,0 +1,40 @@
+---
+title: "Untitled"
+author: "Jonas Schuck"
+date: "2026-04-07"
+output: html_document
+---
+
+########################################
+#
+# Figure assembly LongAIRR Figure S1
+#
+########################################
+
+
+```{r}
+library(png)
+library(cowplot)
+library(patchwork)
+library(ggplot2)
+```
+
+
+#read in intermediates
+```{r}
+s1_a <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp1/intermediates/s1_a.rds")
+s1_b <- readRDS("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp1/intermediates/s1_b.rds")
+```
+
+```{r, fig.width=7, fig.height=6}
+s1_complete <- plot_grid(s1_a, s1_b, nrow = 2, labels=c("a", "b"), label_size = 7, rel_heights = c(1,0.95))
+s1_complete
+
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s1.pdf", plot=s1_complete,width = 7, height = 6)
+ggsave("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/1_full_pds/s1.png", plot=s1_complete,width = 7, height = 6)
+```
+
+```{r}
+sessionInfo()
+```
+

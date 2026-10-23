@@ -1,0 +1,298 @@
+---
+title: "LongAIRR adaptive-filtering group sizes"
+author: "Jonas Schuck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+########################################
+#
+# Script contains the comparison of UMI-SPBC group sizes before and after
+# adaptive filtering and the comparison of retained group size with the
+# final consensus count
+#
+# N_ORIG versus N_KEEP is shown in the LongAIRR supplementary figures
+# N_KEEP versus CONSENSUS_COUNT is used as a reviewer-only figure
+#
+########################################
+
+```{r}
+library(tidyverse)
+library(scales)
+```
+
+read in and filter AIRR data
+```{r}
+dir_bcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/ig_p_parse-select.tsv")
+dir_tcr <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/1_samples_longairr/1_longairr_revision/af5_samples/sp12_ont_sd17_af5/airr/tr_p_parse-select.tsv")
+
+p2459_airr <- bind_rows(
+  read.csv(dir_bcr, sep = "\t"),
+  read.csv(dir_tcr, sep = "\t")
+) %>%
+  mutate(v_region_sequence = str_sub(toupper(sequence),
+                                     start = as.integer(v_sequence_start), end = as.integer(v_sequence_end))) %>%
+  filter(!is.na(c_call) & str_sub(c_call, 1, 3) == locus &
+           !grepl("TTTTTTTTTTT", umi) & !grepl("N", junction) &
+           !grepl("N", v_region_sequence))
+```
+
+--------------------N_ORIG versus N_KEEP--------------
+--------------adaptive-filter retention---------------
+------------------------------------------------------
+
+```{r}
+f1_threshold <- 1
+f2_threshold <- 2
+f3_threshold <- 3
+
+# Adaptive filtering is only applied for groups with N_ORIG > 4
+adaptive_filter_min_n_orig <- 5
+
+density_cap <- 1000
+label_size <- 2.6
+
+p2459_af_plot <- p2459_airr %>%
+  filter(!is.na(n_orig), !is.na(n_keep), n_orig > 0, n_keep > 0) %>%
+  mutate(
+    af_processed = n_orig >= adaptive_filter_min_n_orig,
+    # AF-processed groups affected by at least one downstream filter
+    af_affected_by_filter = af_processed & n_keep <= f3_threshold
+  )
+
+highlight_groups <- p2459_af_plot %>%
+  filter(af_affected_by_filter)
+
+background_groups <- p2459_af_plot %>%
+  filter(!af_affected_by_filter)
+```
+
+prepare axes and annotation labels
+```{r}
+axis_breaks_all <- c(1, 2, 3, 4, 5, 10, 15, 30, 100, 150, 300, 750, 1500, 3000, 7500, 10000, 30000)
+
+plot_max <- max(p2459_af_plot$n_orig, p2459_af_plot$n_keep, na.rm = TRUE)
+plot_max_nice <- min(axis_breaks_all[axis_breaks_all >= plot_max])
+axis_breaks <- axis_breaks_all[axis_breaks_all <= plot_max_nice]
+
+right_label_x <- plot_max_nice / 10^0.025
+af_label_x <- adaptive_filter_min_n_orig * 10^0.035
+af_label_y <- 750 / 10^0.12
+
+n_af_processed <- p2459_af_plot %>%
+  filter(af_processed) %>%
+  nrow()
+
+filter_cutoff_counts <- tibble(
+  filter = c("F1", "F2", "F3"),
+  threshold = c(f1_threshold, f2_threshold, f3_threshold)
+) %>%
+  mutate(
+    n_below_cutoff = map_int(
+      threshold,
+      ~ sum(p2459_af_plot$af_processed & p2459_af_plot$n_keep <= .x, na.rm = TRUE)
+    ),
+    fraction = n_below_cutoff / n_af_processed,
+    label = paste0(
+      "Below ", filter, ":  n=", label_number()(n_below_cutoff),
+      " (", percent(fraction, accuracy = 0.01), ")"
+    )
+  )
+
+f1_label <- filter_cutoff_counts %>% filter(filter == "F1") %>% pull(label)
+f2_label <- filter_cutoff_counts %>% filter(filter == "F2") %>% pull(label)
+f3_label <- filter_cutoff_counts %>% filter(filter == "F3") %>% pull(label)
+
+af_denominator_label <- paste0(
+  "AF-processed groups\n",
+  "n = ", label_number()(n_af_processed)
+)
+```
+
+generate N_ORIG versus N_KEEP scatter
+```{r}
+density_cols <- c("grey85", "grey60", "grey40", "grey20", "black")
+affected_point_col <- "#D62728"
+
+p_norig_nkeep_filters <- ggplot() +
+  geom_bin2d(data = background_groups, aes(x = n_orig, y = n_keep), bins = 90) +
+  geom_point(data = highlight_groups, aes(x = n_orig, y = n_keep),
+             color = affected_point_col, shape = 15, alpha = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 0.35, color = "black") +
+  geom_vline(xintercept = adaptive_filter_min_n_orig, linetype = "longdash", linewidth = 0.35, color = "black") +
+  annotate("segment", x = adaptive_filter_min_n_orig, xend = plot_max_nice,
+           y = f1_threshold, yend = f1_threshold, linetype = "longdash", linewidth = 0.45, color = "black") +
+  annotate("segment", x = adaptive_filter_min_n_orig, xend = plot_max_nice,
+           y = f2_threshold, yend = f2_threshold, linetype = "longdash", linewidth = 0.45, color = "black") +
+  annotate("segment", x = adaptive_filter_min_n_orig, xend = plot_max_nice,
+           y = f3_threshold, yend = f3_threshold, linetype = "longdash", linewidth = 0.45, color = "black") +
+  annotate("text", x = af_label_x, y = af_label_y, label = "AF min-size:\nN_ORIG > 4",
+           hjust = 0, vjust = 1, size = label_size, color = "black") +
+  annotate("text", x = right_label_x, y = 7, label = af_denominator_label,
+           hjust = 1, vjust = 0, size = label_size, color = "black") +
+  annotate("text", x = right_label_x, y = f3_threshold, label = f3_label,
+           hjust = 1, vjust = -0.5, size = label_size, color = "black") +
+  annotate("text", x = right_label_x, y = f2_threshold, label = f2_label,
+           hjust = 1, vjust = -0.5, size = label_size, color = "black") +
+  annotate("text", x = right_label_x, y = f1_threshold * 10^0.035, label = f1_label,
+           hjust = 1, vjust = 0, size = label_size, color = "black") +
+  scale_x_log10(
+    breaks = axis_breaks,
+    labels = label_number(),
+    limits = c(1, plot_max_nice),
+    expand = expansion(mult = c(0.05, 0.01))
+  ) +
+  scale_y_log10(
+    breaks = axis_breaks,
+    labels = label_number(),
+    limits = c(1, plot_max_nice),
+    expand = expansion(mult = c(0.05, 0.01))
+  ) +
+  scale_fill_gradientn(
+    name = "Number of groups",
+    colours = density_cols,
+    trans = "log10",
+    limits = c(1, density_cap),
+    oob = squish,
+    breaks = c(1, 10, 100, density_cap),
+    labels = c("1", "10", "100", paste0("≥", label_number()(density_cap)))
+  ) +
+  #coord_equal() +
+  labs(x = "N_ORIG", y = "N_KEEP") +
+  theme_linedraw(base_size = 7) +
+      theme(
+    panel.grid = element_blank(),
+    #panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(r=2, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+  # theme(
+  #   text = element_text(color = "black"),
+  #   axis.title = element_text(size = 7, color = "black"),
+  #   axis.text = element_text(size = 6, color = "black"),
+  #   axis.text.x = element_text(angle = 35, hjust = 1),
+  #   legend.position = "bottom",
+  #   legend.title = element_text(size = 6.5, color = "black"),
+  #   legend.text = element_text(size = 6, color = "black"),
+  #   panel.grid = element_blank(),
+  #   panel.border = element_rect(linewidth = 0.2),
+  #   plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+  #   panel.background = element_rect(fill = "white", color = NA),
+  #   plot.background = element_rect(fill = "white", color = NA)
+  # )
+```
+
+```{r, fig.width=4.5, fig.height=3.5}
+p_norig_nkeep_filters
+```
+
+```{r}
+save_dir_s4 <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/3_supplementary/supp4/intermediates/")
+saveRDS(p_norig_nkeep_filters, file.path(save_dir_s4, "ps4_a.rds"))
+```
+
+--------------------N_KEEP versus CONSENSUS_COUNT--------------
+--------------consensus subsampling-----------------------------
+----------------------------------------------------------------
+
+```{r}
+subsample_threshold <- 750
+
+p2459_count_scatter <- p2459_airr %>%
+  filter(!is.na(n_keep), !is.na(consensus_count), n_keep > 0, consensus_count > 0) %>%
+  mutate(is_identical_count = consensus_count == n_keep)
+
+identical_counts <- p2459_count_scatter %>%
+  filter(is_identical_count)
+
+capped_counts <- p2459_count_scatter %>%
+  filter(!is_identical_count)
+```
+
+prepare axes
+```{r}
+plot_max_count <- max(
+  p2459_count_scatter$n_keep,
+  p2459_count_scatter$consensus_count,
+  na.rm = TRUE
+)
+
+plot_max_count_nice <- min(axis_breaks_all[axis_breaks_all >= plot_max_count])
+axis_breaks_count <- axis_breaks_all[axis_breaks_all <= plot_max_count_nice]
+```
+
+generate N_KEEP versus CONSENSUS_COUNT scatter
+```{r}
+p_nkeep_consensus <- ggplot() +
+  geom_point(data = identical_counts, aes(x = n_keep, y = consensus_count),
+             size = 1.1, alpha = 1, color = "black") +
+  geom_point(data = capped_counts, aes(x = n_keep, y = consensus_count),
+             color = "#D62728", size = 1.1, alpha = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 0.35, color = "black") +
+  annotate("segment", x = 0, xend = plot_max_count_nice,
+           y = subsample_threshold, yend = subsample_threshold,
+           linetype = "dotted", linewidth = 0.45, color = "black") +
+  annotate("text", x = 30, y = subsample_threshold,
+           label = "Subsampling cap: n = 750",
+           hjust = 1, vjust = -0.4, size = 2.8, color = "black") +
+  scale_x_log10(
+    breaks = axis_breaks_count,
+    labels = label_number(),
+    limits = c(1, plot_max_count_nice),
+    expand = expansion(mult = c(0.05, 0.05))
+  ) +
+  scale_y_log10(
+    breaks = axis_breaks_count,
+    labels = label_number(),
+    limits = c(1, plot_max_count_nice),
+    expand = expansion(mult = c(0.05, 0.05))
+  ) +
+  #coord_equal() +
+  labs(x = "N_KEEP", y = "CONSENSUS_COUNT") +
+  theme_bw(base_size = 7) +
+    theme(
+    panel.grid = element_blank(),
+    #panel.grid.major = element_line(linewidth = 0.25, color = "grey88"),
+    panel.border = element_rect(linewidth = 0.2),
+    axis.title.x = element_text(size = 7, color = "black", margin = margin(t = 2)),
+    axis.title.y = element_text(size = 7, color = "black", margin = margin(r = 2)),
+    axis.text = element_text(size = 6, color = "black"),
+    strip.text = element_text(size = 6.5, color = "black"),
+    strip.background = element_rect(fill = "gray92", color = "grey50", linewidth = 0.2),
+    plot.margin = margin(r=2, 0, 0, 0),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA))
+  # theme(
+  #   text = element_text(color = "black"),
+  #   axis.title = element_text(size = 7, color = "black"),
+  #   axis.text = element_text(size = 6, color = "black"),
+  #   axis.text.x = element_text(angle = 35, hjust = 1),
+  #   panel.grid = element_blank(),
+  #   panel.border = element_rect(linewidth = 0.2),
+  #   plot.margin = margin(t = 2, r = 2, b = 2, l = 0),
+  #   panel.background = element_rect(fill = "white", color = NA),
+  #   plot.background = element_rect(fill = "white", color = NA)
+  # )
+
+
+
+```
+
+```{r, fig.width=4.5, fig.height=3.5}
+p_nkeep_consensus
+```
+
+```{r}
+save_dir_reviewer <- file.path("~/mnt_AG_Imkeller/group_members/schuck/manuscripts/longairr/3_revision/4_answer_only/intermediates/rev1/")
+saveRDS(p_nkeep_consensus, file.path(save_dir_reviewer, "nkeep_ncons.rds"))
+```
+
+```{r}
+sessionInfo()
+```
